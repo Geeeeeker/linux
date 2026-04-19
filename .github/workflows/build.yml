@@ -6,18 +6,27 @@ on:
     tags: [ "v*" ]
   workflow_dispatch:
     inputs:
-      kernel_repo:
-        description: '内核源码仓库地址'
-        required: true
-        default: 'https://github.com/Geeeeeker/linux'
-      kernel_ref:
-        description: '分支、标签或提交哈希'
-        required: true
-        default: 'master'
       kernel_version:
-        description: '自定义内核版本号（用于包名）'
+        description: 'Linux 内核版本'
         required: true
-        default: '7.0.0-custom'
+        type: choice
+        default: '7.0'
+        options:
+          - '7.0'
+          - '6.12'
+          - '6.6'
+          - '6.1'
+          - '5.15'
+          - '5.10'
+          - '5.4'
+          - '4.19'
+          - '4.14'
+          - '4.9'
+          - '4.4'
+      feature_base:
+        description: '基础系统配置 (SYSVIPC, EPOLL, TMPFS等)'
+        type: boolean
+        default: true
       feature_usb_gadget:
         description: 'USB Gadget / UDC / libcomposite'
         type: boolean
@@ -38,12 +47,8 @@ on:
         description: 'VHD 启动支持 (loop + NTFS3)'
         type: boolean
         default: true
-      feature_uvc:
-        description: 'UVC 摄像头支持'
-        type: boolean
-        default: true
-      feature_zstd:
-        description: 'ZSTD 压缩支持'
+      feature_uvc_zstd:
+        description: 'UVC 摄像头 + ZSTD 压缩'
         type: boolean
         default: true
       feature_kvm_vfio:
@@ -70,12 +75,21 @@ on:
         description: '杜比音频支持 (HDMI/DP)'
         type: boolean
         default: true
+      feature_android:
+        description: 'Android 容器支持 (Binder/Ashmem/ION)'
+        type: boolean
+        default: true
+      feature_ksu:
+        description: 'KernelSU 基础支持 (Kprobes)'
+        type: boolean
+        default: true
 
 env:
-  KERNEL_REPO: ${{ github.event.inputs.kernel_repo || 'https://github.com/Geeeeeker/linux' }}
-  KERNEL_REF: ${{ github.event.inputs.kernel_ref || 'master' }}
-  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '7.0.0-custom' }}
+  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '7.0' }}
   ARTIFACT_NAME: linux-kernel-${{ github.run_number }}
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -102,20 +116,30 @@ jobs:
       - name: 打印编译环境信息
         run: |
           echo "=== 编译环境硬件信息 ==="
-          echo "CPU 信息:"
           lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread|Core|Socket" || true
-          echo "内存信息:"
           free -h
-          echo "操作系统信息:"
           lsb_release -a 2>/dev/null || cat /etc/os-release
 
-      - name: 克隆 Linux 内核源码
-        run: |
-          echo "克隆仓库：$KERNEL_REPO，引用：$KERNEL_REF"
-          git clone --depth 1 --branch $KERNEL_REF $KERNEL_REPO linux-src
-          cd linux-src
-          echo "KERNEL_SRC=$(pwd)" >> $GITHUB_ENV
+      # ---------- 缓存 Linux 源码压缩包 ----------
+      - name: 缓存 Linux 源码压缩包
+        id: cache-src-tarball
+        uses: actions/cache@v4
+        with:
+          path: linux.tar.gz
+          key: linux-kernel-src-${{ env.KERNEL_VERSION }}
 
+      - name: 下载 Linux 内核源码 (若未缓存)
+        if: steps.cache-src-tarball.outputs.cache-hit != 'true'
+        run: |
+          wget -q "https://github.com/torvalds/linux/archive/refs/tags/v${KERNEL_VERSION}.tar.gz" -O linux.tar.gz
+
+      - name: 解压源码并设置工作目录
+        run: |
+          tar -xzf linux.tar.gz
+          mv linux-* linux-src
+          echo "KERNEL_SRC=$(pwd)/linux-src" >> $GITHUB_ENV
+
+      # ---------- 集成 CH343P 驱动源码 ----------
       - name: 集成 CH343P 驱动源码
         if: github.event.inputs.feature_usb_serial == 'true'
         run: |
@@ -135,7 +159,7 @@ jobs:
       - name: 创建按需自定义内核配置片段
         run: |
           cd $KERNEL_SRC
-          # 基础配置始终启用
+          # 基础配置（始终启用）
           cat > custom-features.cfg << 'EOF'
           CONFIG_SYSVIPC=y
           CONFIG_SYSVIPC_SYSCTL=y
@@ -252,8 +276,8 @@ jobs:
           EOF
           fi
 
-          # UVC 摄像头
-          if [[ "${{ github.event.inputs.feature_uvc }}" == "true" ]]; then
+          # UVC 摄像头 + ZSTD 压缩
+          if [[ "${{ github.event.inputs.feature_uvc_zstd }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_VIDEO_CLASS=y
           CONFIG_MEDIA_SUPPORT=y
@@ -268,12 +292,6 @@ jobs:
           CONFIG_VIDEOBUF2_DMA_SG=y
           CONFIG_V4L_PLATFORM_DRIVERS=y
           CONFIG_V4L_MEM2MEM_DRIVERS=y
-          EOF
-          fi
-
-          # ZSTD
-          if [[ "${{ github.event.inputs.feature_zstd }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
           CONFIG_ZSTD_COMPRESS=y
           CONFIG_ZSTD_DECOMPRESS=y
           EOF
@@ -348,27 +366,48 @@ jobs:
           EOF
           fi
 
+          # Android 容器支持
+          if [[ "${{ github.event.inputs.feature_android }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_STAGING=y
+          CONFIG_ASHMEM=y
+          CONFIG_ANDROID=y
+          CONFIG_ANDROID_BINDER_IPC=y
+          CONFIG_ANDROID_BINDERFS=y
+          CONFIG_ION=y
+          CONFIG_ION_SYSTEM_HEAP=y
+          EOF
+          fi
+
+          # KernelSU 基础支持
+          if [[ "${{ github.event.inputs.feature_ksu }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_KPROBES=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_DEBUG_FS=y
+          EOF
+          fi
+
       - name: 合并自定义配置并生成最终配置
         run: |
           cd $KERNEL_SRC
           scripts/kconfig/merge_config.sh -m .config custom-features.cfg
           make olddefconfig
 
-      - name: 二次确认关键选项（确保依赖满足后仍为 y/m）
+      - name: 二次确认关键选项（防止依赖问题导致关闭）
         run: |
           cd $KERNEL_SRC
           if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
             scripts/config --enable CONFIG_USB_DWC3_HOST
             scripts/config --enable CONFIG_USB_DWC3_GADGET
           fi
-          if [[ "${{ github.event.inputs.feature_uvc }}" == "true" ]]; then
+          if [[ "${{ github.event.inputs.feature_uvc_zstd }}" == "true" ]]; then
             scripts/config --enable CONFIG_USB_VIDEO_CLASS
+            scripts/config --enable CONFIG_ZSTD_COMPRESS
           fi
           if [[ "${{ github.event.inputs.feature_apple }}" == "true" ]]; then
             scripts/config --enable CONFIG_KEYBOARD_APPLESPI
-          fi
-          if [[ "${{ github.event.inputs.feature_zstd }}" == "true" ]]; then
-            scripts/config --enable CONFIG_ZSTD_COMPRESS
           fi
           make olddefconfig
 
@@ -393,7 +432,7 @@ jobs:
       - name: 编译内核（生成 deb 包）
         run: |
           cd $KERNEL_SRC
-          # 兼容旧内核 (如 4.4) 的属性冲突警告
+          # 兼容 4.4 等旧内核的属性冲突警告
           export KCFLAGS="-Wno-attributes -Wno-error"
           make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
 
@@ -440,7 +479,7 @@ jobs:
           find . -name "*.ko" -type f | zip -q -@ "${MODULE_ZIP}"
           echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
 
-          # 3. 复制 USB/IP 工具包（如果存在）
+          # 3. 复制 USB/IP 工具包
           if [ -f /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz ]; then
             cp /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
             echo "USB/IP 工具包已复制"
@@ -452,24 +491,25 @@ jobs:
           cd $GITHUB_WORKSPACE/artifacts
           cat > RELEASE_INFO.txt << EOF
           内核版本：${KERNEL_VERSION}
-          源码仓库：${KERNEL_REPO} (ref: ${KERNEL_REF})
           构建时间：$(date)
           GitHub 运行编号：${{ github.run_number }}
 
           用户选择的功能：
+          - 基础系统配置: ${{ github.event.inputs.feature_base }}
           - USB Gadget/UDC: ${{ github.event.inputs.feature_usb_gadget }}
           - USB 转串口: ${{ github.event.inputs.feature_usb_serial }}
           - USB/IP: ${{ github.event.inputs.feature_usbip }}
           - LXC 容器: ${{ github.event.inputs.feature_lxc }}
           - VHD 启动: ${{ github.event.inputs.feature_vhd }}
-          - UVC 摄像头: ${{ github.event.inputs.feature_uvc }}
-          - ZSTD 压缩: ${{ github.event.inputs.feature_zstd }}
+          - UVC/ZSTD: ${{ github.event.inputs.feature_uvc_zstd }}
           - KVM/VFIO: ${{ github.event.inputs.feature_kvm_vfio }}
           - Docker/Podman: ${{ github.event.inputs.feature_docker }}
           - Btrfs: ${{ github.event.inputs.feature_btrfs }}
           - RTL8xxxU: ${{ github.event.inputs.feature_rtl8xxxu }}
           - Apple 驱动: ${{ github.event.inputs.feature_apple }}
           - 杜比音频: ${{ github.event.inputs.feature_dolby }}
+          - Android 容器: ${{ github.event.inputs.feature_android }}
+          - KernelSU 基础: ${{ github.event.inputs.feature_ksu }}
 
           产物文件：
           - *.deb                : 内核安装包
@@ -511,23 +551,23 @@ jobs:
           body: |
             ## 📦 Linux ${{ env.KERNEL_VERSION }} 定制内核
 
-            **源码仓库：** ${{ env.KERNEL_REPO }} (ref: ${{ env.KERNEL_REF }})
             **构建时间：** $(date)
-
-            ### ✨ 用户选择的功能
+            **用户选择的功能：**
+            - 基础系统配置: ${{ github.event.inputs.feature_base }}
             - USB Gadget/UDC: ${{ github.event.inputs.feature_usb_gadget }}
             - USB 转串口: ${{ github.event.inputs.feature_usb_serial }}
             - USB/IP: ${{ github.event.inputs.feature_usbip }}
             - LXC 容器: ${{ github.event.inputs.feature_lxc }}
             - VHD 启动: ${{ github.event.inputs.feature_vhd }}
-            - UVC 摄像头: ${{ github.event.inputs.feature_uvc }}
-            - ZSTD 压缩: ${{ github.event.inputs.feature_zstd }}
+            - UVC/ZSTD: ${{ github.event.inputs.feature_uvc_zstd }}
             - KVM/VFIO: ${{ github.event.inputs.feature_kvm_vfio }}
             - Docker/Podman: ${{ github.event.inputs.feature_docker }}
             - Btrfs: ${{ github.event.inputs.feature_btrfs }}
             - RTL8xxxU: ${{ github.event.inputs.feature_rtl8xxxu }}
             - Apple 驱动: ${{ github.event.inputs.feature_apple }}
             - 杜比音频: ${{ github.event.inputs.feature_dolby }}
+            - Android 容器: ${{ github.event.inputs.feature_android }}
+            - KernelSU 基础: ${{ github.event.inputs.feature_ksu }}
 
             ### 📁 产物说明
             - **.deb 文件**：内核镜像、头文件、C 库开发包
