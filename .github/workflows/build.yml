@@ -83,9 +83,12 @@ on:
         description: 'KernelSU 基础支持 (Kprobes)'
         type: boolean
         default: true
-      # 新增 USB 3.2 / xHCI 选项
-      feature_usb32:
-        description: 'USB 3.2 完整支持 (xHCI 主机控制器)'
+      feature_xhci:
+        description: 'xHCI 主机控制器支持 (USB 3.x 主控)'
+        type: boolean
+        default: true
+      feature_usb3_2:
+        description: 'USB 3.2 SuperSpeed 支持'
         type: boolean
         default: true
 
@@ -130,6 +133,7 @@ jobs:
           echo "GCC 版本:"
           gcc --version
 
+      # ---------- 缓存 Linux 源码压缩包 ----------
       - name: 缓存 Linux 源码压缩包
         id: cache-src-tarball
         uses: actions/cache@v4
@@ -144,22 +148,12 @@ jobs:
           echo "下载 Linux ${KERNEL_VERSION} 源码..."
           wget -q "https://github.com/torvalds/linux/archive/refs/tags/v${KERNEL_VERSION}.tar.gz" -O linux.tar.gz
 
+      # ---------- 解压源码 ----------
       - name: 解压源码并设置工作目录
         run: |
           tar -xzf linux.tar.gz
           mv linux-* linux-src
           echo "KERNEL_SRC=$(pwd)/linux-src" >> $GITHUB_ENV
-
-      - name: 集成 CH343P 驱动源码
-        if: github.event.inputs.feature_usb_serial == 'true'
-        run: |
-          cd $KERNEL_SRC
-          if [ ! -f drivers/usb/serial/ch343.c ]; then
-            wget -q https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c
-          fi
-          if [ ! -f drivers/usb/serial/ch343.h ]; then
-            wget -q https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h
-          fi
 
       - name: 生成主线默认配置
         run: |
@@ -190,6 +184,7 @@ jobs:
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
           EOF
+
           if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_GADGET=y
@@ -209,6 +204,7 @@ jobs:
           CONFIG_USB_MASS_STORAGE=y
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_usb_serial }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_SERIAL=y
@@ -216,6 +212,11 @@ jobs:
           CONFIG_USB_SERIAL_CH341=y
           CONFIG_USB_SERIAL_CH343=m
           EOF
+            # 下载 CH343 驱动源码
+            if [ ! -f drivers/usb/serial/ch343.c ]; then
+              wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败"
+              wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败"
+            fi
             if ! grep -q "config USB_SERIAL_CH343" drivers/usb/serial/Kconfig; then
               echo "" >> drivers/usb/serial/Kconfig
               echo "config USB_SERIAL_CH343" >> drivers/usb/serial/Kconfig
@@ -227,6 +228,7 @@ jobs:
               echo "obj-\$(CONFIG_USB_SERIAL_CH343) += ch343.o" >> drivers/usb/serial/Makefile
             fi
           fi
+
           if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USBIP_CORE=y
@@ -235,6 +237,7 @@ jobs:
           CONFIG_USBIP_VHCI_HC_PORTS=8
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_lxc }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_NAMESPACES=y
@@ -265,6 +268,7 @@ jobs:
           CONFIG_NETFILTER_XT_MATCH_IPVS=y
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_vhd }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_BLK_DEV_LOOP=y
@@ -273,25 +277,15 @@ jobs:
           CONFIG_NTFS_FS=n
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_uvc_zstd }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_VIDEO_CLASS=y
-          CONFIG_MEDIA_SUPPORT=y
-          CONFIG_MEDIA_CAMERA_SUPPORT=y
-          CONFIG_MEDIA_CONTROLLER=y
-          CONFIG_VIDEO_DEV=y
-          CONFIG_VIDEO_V4L2=y
-          CONFIG_VIDEOBUF2_CORE=y
-          CONFIG_VIDEOBUF2_V4L2=y
-          CONFIG_VIDEOBUF2_MEMOPS=y
-          CONFIG_VIDEOBUF2_VMALLOC=y
-          CONFIG_VIDEOBUF2_DMA_SG=y
-          CONFIG_V4L_PLATFORM_DRIVERS=y
-          CONFIG_V4L_MEM2MEM_DRIVERS=y
           CONFIG_ZSTD_COMPRESS=y
           CONFIG_ZSTD_DECOMPRESS=y
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_kvm_vfio }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_KVM=y
@@ -304,6 +298,7 @@ jobs:
           CONFIG_DRM_I915_GVT_KVMGT=y
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_docker }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_OVERLAY_FS=m
@@ -317,18 +312,21 @@ jobs:
           CONFIG_CGROUP_BPF=y
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_btrfs }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_BTRFS_FS=m
           CONFIG_BTRFS_FS_POSIX_ACL=y
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_rtl8xxxu }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_RTL8XXXU=m
           CONFIG_RTL8XXXU_UNTESTED=y
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_apple }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USB4=m
@@ -338,8 +336,21 @@ jobs:
           CONFIG_HID_APPLE=y
           CONFIG_KEYBOARD_APPLESPI=y
           CONFIG_SENSORS_APPLESMC=y
+          CONFIG_MEDIA_SUPPORT=y
+          CONFIG_MEDIA_CAMERA_SUPPORT=y
+          CONFIG_MEDIA_CONTROLLER=y
+          CONFIG_VIDEO_DEV=y
+          CONFIG_VIDEO_V4L2=y
+          CONFIG_VIDEOBUF2_CORE=y
+          CONFIG_VIDEOBUF2_V4L2=y
+          CONFIG_VIDEOBUF2_MEMOPS=y
+          CONFIG_VIDEOBUF2_VMALLOC=y
+          CONFIG_VIDEOBUF2_DMA_SG=y
+          CONFIG_V4L_PLATFORM_DRIVERS=y
+          CONFIG_V4L_MEM2MEM_DRIVERS=y
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_dolby }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_SND_HDA_INTEL=y
@@ -349,6 +360,7 @@ jobs:
           CONFIG_SND_HDA_CODEC_CS8409=y
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_android }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_STAGING=y
@@ -360,6 +372,7 @@ jobs:
           CONFIG_ION_SYSTEM_HEAP=y
           EOF
           fi
+
           if [[ "${{ github.event.inputs.feature_ksu }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_KPROBES=y
@@ -368,15 +381,20 @@ jobs:
           CONFIG_DEBUG_FS=y
           EOF
           fi
-          # ---------- 新增 USB 3.2 / xHCI 支持 ----------
-          if [[ "${{ github.event.inputs.feature_usb32 }}" == "true" ]]; then
+
+          if [[ "${{ github.event.inputs.feature_xhci }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
-          # xHCI 主机控制器 (USB 3.0/3.1/3.2)
           CONFIG_USB_XHCI_HCD=y
           CONFIG_USB_XHCI_PCI=y
           CONFIG_USB_XHCI_PLATFORM=y
-          CONFIG_USB_DYNAMIC_MINORS=y
-          CONFIG_USB_SUSPEND=y
+          CONFIG_USB_PCI=y
+          EOF
+          fi
+
+          if [[ "${{ github.event.inputs.feature_usb3_2 }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_USB_SUPERSPEED=y
+          CONFIG_USB_DEFAULT_PERSIST=y
           EOF
           fi
 
@@ -392,13 +410,14 @@ jobs:
             cat custom-features.cfg >> .config.tmp
             mv .config.tmp .config
           fi
+
           if make help | grep -q olddefconfig; then
             make olddefconfig
           else
             echo "olddefconfig 不支持，使用 yes '' | make oldconfig"
             yes "" | make oldconfig
           fi
-          # 二次强制启用关键项
+
           if [ -f scripts/config ]; then
             echo "使用 scripts/config 强制启用关键选项..."
             if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
@@ -411,13 +430,6 @@ jobs:
               ./scripts/config --enable CONFIG_USB_CONFIGFS
               ./scripts/config --enable CONFIG_USB_DWC3_HOST
               ./scripts/config --enable CONFIG_USB_DWC3_GADGET
-            fi
-            if [[ "${{ github.event.inputs.feature_uvc_zstd }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_VIDEO_CLASS
-              ./scripts/config --enable CONFIG_ZSTD_COMPRESS
-            fi
-            if [[ "${{ github.event.inputs.feature_apple }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_KEYBOARD_APPLESPI
             fi
             if [[ "${{ github.event.inputs.feature_kvm_vfio }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_KVM
@@ -432,10 +444,12 @@ jobs:
             if [[ "${{ github.event.inputs.feature_vhd }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_NTFS3_FS
             fi
-            # 新增 USB 3.2 强制启用
-            if [[ "${{ github.event.inputs.feature_usb32 }}" == "true" ]]; then
+            if [[ "${{ github.event.inputs.feature_xhci }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_USB_XHCI_HCD
               ./scripts/config --enable CONFIG_USB_XHCI_PCI
+            fi
+            if [[ "${{ github.event.inputs.feature_usb3_2 }}" == "true" ]]; then
+              ./scripts/config --enable CONFIG_USB_SUPERSPEED
             fi
             if make help | grep -q olddefconfig; then
               make olddefconfig
@@ -448,12 +462,14 @@ jobs:
         run: |
           cd $KERNEL_SRC
           echo "=== 已启用的配置项 (部分) ==="
-          grep -E "CONFIG_USB_GADGET|CONFIG_USB_DWC3|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_USB_VIDEO_CLASS|CONFIG_KEYBOARD_APPLESPI|CONFIG_ZSTD_COMPRESS|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS|CONFIG_USB_XHCI_HCD" .config || true
+          grep -E "CONFIG_USB_GADGET|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS|CONFIG_USB_XHCI_HCD|CONFIG_USB_SUPERSPEED" .config || true
 
-      - name: 编译内核 (生成二进制 deb 包，修复 4.4 源码包检查)
+      - name: 编译内核 (生成二进制 deb 包)
         run: |
           cd $KERNEL_SRC
-          export KCFLAGS="-Wno-attributes -Wno-error"
+          # 修复旧内核（如 4.4）PIC 错误和源码包检查
+          export KBUILD_CFLAGS="-fno-pie"
+          export KCFLAGS="-fno-pie -Wno-attributes -Wno-error"
           export KDEB_SOURCECHECK=false
           if make help | grep -q "bindeb-pkg"; then
             echo "使用 bindeb-pkg 构建"
@@ -475,7 +491,9 @@ jobs:
           mkdir -p /tmp/usbip-tools/usr/local/lib
           mkdir -p /tmp/usbip-tools/usr/local/sbin
           make install DESTDIR=/tmp/usbip-tools
+          # 显式复制所有动态库
           find /tmp/usbip-tools -name "*.so*" -exec cp -P {} /tmp/usbip-tools/usr/local/lib/ \; 2>/dev/null || true
+          find /tmp/usbip-tools -name "*.so*" -exec echo "库文件: {}" \;
           cat > /tmp/usbip-tools/install.sh << 'EOF'
           #!/bin/bash
           echo "安装 USB/IP 工具..."
@@ -486,38 +504,42 @@ jobs:
           echo "USB/IP 工具安装完成！"
           EOF
           chmod +x /tmp/usbip-tools/install.sh
-          echo "=== USB/IP 工具编译完成 ==="
-          ls -la /tmp/usbip-tools/usr/local/bin/
-          ls -la /tmp/usbip-tools/usr/local/lib/
+          cd /tmp
+          tar -czf usbip-tools-linux-${KERNEL_VERSION}.tar.gz usbip-tools/
+          echo "=== USB/IP 工具打包完成 ==="
+          ls -la /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz
 
       - name: 收集构建产物 (分离 deb、内核模块、usbip)
         run: |
           mkdir -p artifacts
+
           # 1. 复制所有 deb 包
           cp $KERNEL_SRC/../*.deb artifacts/ 2>/dev/null || true
           echo "=== 收集到的 deb 包 ==="
           ls -la artifacts/*.deb || echo "未找到 deb 包"
+
           # 2. 打包内核模块为 zip
           cd $KERNEL_SRC
           MODULE_ZIP="$GITHUB_WORKSPACE/artifacts/${ARTIFACT_NAME}-modules.zip"
           find . -name "*.ko" -type f | zip -q -@ "${MODULE_ZIP}"
           find . -name "*.ko" -type f > $GITHUB_WORKSPACE/artifacts/modules-list.txt
           echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
-          # 3. USB/IP 工具打包（保持原始逻辑）
-          if [ -d /tmp/usbip-tools ] && [ -n "$(ls -A /tmp/usbip-tools/usr/local/bin 2>/dev/null)" ]; then
-            cd /tmp
-            tar -czf usbip-tools-linux-${KERNEL_VERSION}.tar.gz usbip-tools/
-            cp usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
-            echo "USB/IP 工具已打包"
+
+          # 3. USB/IP 工具打包
+          if [ -f /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz ]; then
+            cp /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
+            echo "USB/IP 工具已复制到 artifacts"
           else
-            echo "警告: USB/IP 工具目录为空，跳过打包。"
+            echo "警告: USB/IP 工具包未找到，跳过"
           fi
+
           # 4. 生成说明文件
           cd $GITHUB_WORKSPACE/artifacts
           cat > RELEASE_INFO.txt << EOF
           内核版本：${KERNEL_VERSION}
           构建时间：$(date)
           GitHub 运行编号：${{ github.run_number }}
+
           用户选择的功能：
           - 基础系统配置: ${{ github.event.inputs.feature_base }}
           - USB Gadget/UDC: ${{ github.event.inputs.feature_usb_gadget }}
@@ -534,8 +556,10 @@ jobs:
           - 杜比音频: ${{ github.event.inputs.feature_dolby }}
           - Android 容器: ${{ github.event.inputs.feature_android }}
           - KernelSU 基础: ${{ github.event.inputs.feature_ksu }}
-          - USB 3.2 支持 (xHCI): ${{ github.event.inputs.feature_usb32 }}
+          - xHCI 主机控制器: ${{ github.event.inputs.feature_xhci }}
+          - USB 3.2 SuperSpeed: ${{ github.event.inputs.feature_usb3_2 }}
           - Apache 符号支持: CONFIG_KALLSYMS=y, CONFIG_KALLSYMS_ALL=y
+
           产物文件：
           - *.deb                : 内核安装包
           - *-modules.zip        : 内核模块 (.ko)
@@ -553,9 +577,6 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-    # 显式授予写入权限，确保 Release 创建和文件上传成功
-    permissions:
-      contents: write
     steps:
       - name: 下载 Artifact
         uses: actions/download-artifact@v4
@@ -575,6 +596,7 @@ jobs:
           name: Linux ${{ env.KERNEL_VERSION }} 定制内核
           body: |
             ## 📦 Linux ${{ env.KERNEL_VERSION }} 定制内核
+
             **构建时间：** $(date)
             **用户选择的功能：**
             - 基础系统配置: ${{ github.event.inputs.feature_base }}
@@ -592,21 +614,34 @@ jobs:
             - 杜比音频: ${{ github.event.inputs.feature_dolby }}
             - Android 容器: ${{ github.event.inputs.feature_android }}
             - KernelSU 基础: ${{ github.event.inputs.feature_ksu }}
-            - **USB 3.2 支持 (xHCI)**: ${{ github.event.inputs.feature_usb32 }}
+            - xHCI 主机控制器: ${{ github.event.inputs.feature_xhci }}
+            - USB 3.2 SuperSpeed: ${{ github.event.inputs.feature_usb3_2 }}
             - **Apache 符号支持**: CONFIG_KALLSYMS=y + CONFIG_KALLSYMS_ALL=y (完整)
+
             ### 📁 产物说明
             - **.deb 文件**：内核镜像、头文件、C 库开发包
             - **Kernel-Linux-版本-x86_64-modules.zip**：所有内核模块文件（.ko）
             - **usbip-tools-linux-版本.tar.gz**：USB/IP 用户空间工具（如启用）
             - **RELEASE_INFO.txt**：构建详细信息
+
             ### 🚀 快速安装
             ```bash
             # 安装内核
             sudo dpkg -i linux-image-*.deb linux-headers-*.deb linux-libc-dev*.deb
+
             # （可选）提取内核模块
             unzip Kernel-Linux-*-modules.zip -d /lib/modules/
+
             # （可选）安装 USB/IP 工具
             tar -xzf usbip-tools-linux-*.tar.gz
             cd usbip-tools/
             sudo ./install.sh
+
             sudo reboot
+          files: |
+            release-files/*.deb
+            release-files/*-modules.zip
+            release-files/usbip-tools-*.tar.gz
+            release-files/RELEASE_INFO.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
