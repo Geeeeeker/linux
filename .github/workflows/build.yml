@@ -138,52 +138,19 @@ jobs:
           echo "下载 Linux ${KERNEL_VERSION} 源码..."
           wget -q "https://github.com/torvalds/linux/archive/refs/tags/v${KERNEL_VERSION}.tar.gz" -O linux.tar.gz
 
-      # ---------- 缓存：编译目录 ----------
-      - name: 生成配置片段 (用于缓存键)
-        run: |
-          cat > custom-features.cfg << 'EOF'
-          ${{ github.event.inputs.feature_base == 'true' && 'CONFIG_SYSVIPC=y' || '' }}
-          ${{ github.event.inputs.feature_usb_gadget == 'true' && 'CONFIG_USB_GADGET=y' || '' }}
-          ${{ github.event.inputs.feature_usb_serial == 'true' && 'CONFIG_USB_SERIAL_CH343=m' || '' }}
-          ${{ github.event.inputs.feature_usbip == 'true' && 'CONFIG_USBIP_CORE=y' || '' }}
-          ${{ github.event.inputs.feature_lxc == 'true' && 'CONFIG_NAMESPACES=y' || '' }}
-          ${{ github.event.inputs.feature_vhd == 'true' && 'CONFIG_NTFS3_FS=y' || '' }}
-          ${{ github.event.inputs.feature_uvc_zstd == 'true' && 'CONFIG_USB_VIDEO_CLASS=y' || '' }}
-          ${{ github.event.inputs.feature_kvm_vfio == 'true' && 'CONFIG_KVM=y' || '' }}
-          ${{ github.event.inputs.feature_docker == 'true' && 'CONFIG_OVERLAY_FS=m' || '' }}
-          ${{ github.event.inputs.feature_btrfs == 'true' && 'CONFIG_BTRFS_FS=m' || '' }}
-          ${{ github.event.inputs.feature_rtl8xxxu == 'true' && 'CONFIG_RTL8XXXU=m' || '' }}
-          ${{ github.event.inputs.feature_apple == 'true' && 'CONFIG_USB4=m' || '' }}
-          ${{ github.event.inputs.feature_dolby == 'true' && 'CONFIG_SND_HDA_CODEC_DOLBY=y' || '' }}
-          ${{ github.event.inputs.feature_android == 'true' && 'CONFIG_ASHMEM=y' || '' }}
-          ${{ github.event.inputs.feature_ksu == 'true' && 'CONFIG_KPROBES=y' || '' }}
-          EOF
-
-      - name: 缓存编译目录
-        id: cache-build
-        uses: actions/cache@v4
-        with:
-          path: linux-src
-          key: linux-kernel-build-${{ env.KERNEL_VERSION }}-${{ hashFiles('custom-features.cfg') }}
-
-      - name: 解压源码 (若缓存未命中)
-        if: steps.cache-build.outputs.cache-hit != 'true'
+      # ---------- 移除编译目录缓存，确保每次手动触发都重新配置编译 ----------
+      - name: 解压源码并设置工作目录
         run: |
           tar -xzf linux.tar.gz
           mv linux-* linux-src
-
-      - name: 设置 KERNEL_SRC 环境变量
-        run: |
           echo "KERNEL_SRC=$(pwd)/linux-src" >> $GITHUB_ENV
 
       # ---------- 内核配置与编译 ----------
-      - name: 生成主线默认配置 (若缓存未命中或首次)
-        if: steps.cache-build.outputs.cache-hit != 'true'
+      - name: 生成主线默认配置
         run: |
           cd $KERNEL_SRC
           make defconfig
 
-      # 注意：自定义配置片段的生成和 CH343 下载不受缓存影响，每次都执行以确保最新选项
       - name: 创建自定义内核配置片段 (完整版)
         run: |
           cd $KERNEL_SRC
@@ -409,28 +376,19 @@ jobs:
           EOF
           fi
 
-      # 关键修改：每次运行都应用配置片段，不再依赖缓存条件
       - name: 应用自定义配置 (兼容新旧内核)
         run: |
           cd $KERNEL_SRC
-          # 确保 .config 存在（如果缓存命中但之前没有 .config，则先 defconfig）
-          if [ ! -f .config ]; then
-            make defconfig
-          fi
-          # 备份原有配置，然后合并 custom-features.cfg
-          cp .config .config.before_custom
           if [ -f scripts/kconfig/merge_config.sh ]; then
             echo "使用 merge_config.sh 合并配置..."
             scripts/kconfig/merge_config.sh -m .config custom-features.cfg
           else
             echo "merge_config.sh 不存在，手动追加配置..."
+            cp .config .config.orig
             cat custom-features.cfg >> .config
             yes "" | make oldconfig
           fi
-          # 最终生成完整配置
           make olddefconfig || make oldconfig
-          echo "=== 应用后的配置片段检查 ==="
-          grep -E "CONFIG_USBIP_CORE|CONFIG_USB_GADGET|CONFIG_BTRFS_FS|CONFIG_OVERLAY_FS|CONFIG_NTFS3_FS|CONFIG_KVM" .config || true
 
       - name: 显示关键配置状态 (验证)
         run: |
