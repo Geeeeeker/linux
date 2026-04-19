@@ -83,6 +83,10 @@ on:
         description: 'KernelSU 基础支持 (Kprobes)'
         type: boolean
         default: true
+      feature_usb32:
+        description: 'USB 3.2 完整支持 (xHCI 主机控制器)'
+        type: boolean
+        default: true
 
 env:
   KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '7.0' }}
@@ -113,6 +117,7 @@ jobs:
             libtool autoconf automake pkg-config libglib2.0-dev libudev-dev \
             libusb-1.0-0-dev libxml2-dev \
             debhelper libdw-dev
+
       - name: 打印编译环境信息
         run: |
           echo "=== 编译环境硬件信息 ==="
@@ -123,7 +128,7 @@ jobs:
           lsb_release -a 2>/dev/null || cat /etc/os-release
           echo "GCC 版本:"
           gcc --version
-      # ---------- 缓存 Linux 源码压缩包 ----------
+
       - name: 缓存 Linux 源码压缩包
         id: cache-src-tarball
         uses: actions/cache@v4
@@ -137,12 +142,13 @@ jobs:
           KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
           echo "下载 Linux ${KERNEL_VERSION} 源码..."
           wget -q "https://github.com/torvalds/linux/archive/refs/tags/v${KERNEL_VERSION}.tar.gz" -O linux.tar.gz
-      # ---------- 解压源码 ----------
+
       - name: 解压源码并设置工作目录
         run: |
           tar -xzf linux.tar.gz
           mv linux-* linux-src
           echo "KERNEL_SRC=$(pwd)/linux-src" >> $GITHUB_ENV
+
       - name: 集成 CH343P 驱动源码
         if: github.event.inputs.feature_usb_serial == 'true'
         run: |
@@ -153,10 +159,12 @@ jobs:
           if [ ! -f drivers/usb/serial/ch343.h ]; then
             wget -q https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h
           fi
+
       - name: 生成主线默认配置
         run: |
           cd $KERNEL_SRC
           make defconfig
+
       - name: 创建自定义内核配置片段 (完整版)
         run: |
           cd $KERNEL_SRC
@@ -359,6 +367,18 @@ jobs:
           CONFIG_DEBUG_FS=y
           EOF
           fi
+          # 新增 USB 3.2 / xHCI 支持（独立于 USB Gadget）
+          if [[ "${{ github.event.inputs.feature_usb32 }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          # xHCI 主机控制器 (USB 3.0/3.1/3.2)
+          CONFIG_USB_XHCI_HCD=y
+          CONFIG_USB_XHCI_PCI=y
+          CONFIG_USB_XHCI_PLATFORM=y
+          CONFIG_USB_DYNAMIC_MINORS=y
+          CONFIG_USB_SUSPEND=y
+          EOF
+          fi
+
       - name: 应用自定义配置 (兼容所有内核版本)
         run: |
           cd $KERNEL_SRC
@@ -371,214 +391,441 @@ jobs:
             cat custom-features.cfg >> .config.tmp
             mv .config.tmp .config
           fi
-          if make help | grep -q olddefconfig; then
-            make olddefconfig
-          else
-            echo "olddefconfig 不支持，使用 yes '' | make oldconfig"
-            yes "" | make oldconfig
-          fi
-          # 二次强制启用关键项
-          if [ -f scripts/config ]; then
-            echo "使用 scripts/config 强制启用关键选项..."
-            if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USBIP_CORE
+          if make
+          if make help | grep -q old help | grep -q olddefconfig; thendefconfig; then
+
+                       make olddefconfig make olddefconfig
+         
+          else else
+            echo "old
+            echo "olddefconfigdefconfig 不支持 不支持，使用，使用 yes '' yes '' | make oldconfig"
+            | make oldconfig"
+            yes "" yes "" | make | make oldconfig oldconfig
+         
+          fi fi
+          #
+          # 二次 二次强制启用强制启用关键项关键项
+         
+          if if [ [ -f -f scripts/config scripts/config ]; then ]; then
+           
+            echo echo " "使用 scripts使用 scripts/config /config 强制启用关键选项强制启用关键选项..."
+            if [[ "${{..."
+            if [[ "$ github.event.inputs{{ github.event.feature.inputs_usb.feature_usbip }}" == "ip }}" == "true"true" ]]; then
+              ./scripts ]]; then
+              ./scripts/config --/config --enable CONFIG_USenable CONFIG_USBIP_CORE
+              ./scripts/config --enable CONFIG_USBIP_VHCI_HCDBIP
+              ./_CORE
               ./scripts/config --enable CONFIG_USBIP_VHCI_HCD
-              ./scripts/config --enable CONFIG_USBIP_HOST
+              ./scripts/config --enable CONFIGscripts/config --enable CONFIG_USB_USBIP_HOSTIP_HOST
+           
+            fi fi
+            if
+            if [[ "$ [[ "${{ github.event.input{{ github.event.inputs.fes.feature_usature_usb_gb_gadgetadget }}" == }}" == "true" ]]; then "true" ]];
+              ./ then
+              ./scripts/configscripts/config --enable --enable CONFIG CONFIG_USB_USB_GAD_GADGET
+              ./scripts/config --enable CONGET
+              ./scripts/config --enable CONFIGFIG_USB_CONFIGFS_USB
+             _CONFIGFS
+              ./scripts ./scripts/config --/config --enable CONenable CONFIG_USFIG_USB_DB_DWC3WC3_HOST_HOST
+             
+              ./scripts/config ./scripts/config --enable --enable CONFIG CONFIG_USB_USB_DWC_DWC3_G3_GADGETADGET
+           
+            fi fi
+            if [[ "$
+            if [[ "${{ github.event.input{{ github.event.inputs.feature_s.feature_uvcuvc_zstd }}" ==_zstd }}" == "true" ]]; then
+              "true" ]]; then
+              ./ ./scripts/configscripts/config --enable --enable CONFIG_USB CONFIG_USB_VID_VIDEO_CLASSEO_CLASS
+              ./
+              ./scripts/configscripts/config --enable --enable CONFIG CONFIG_ZSTD_ZST_COMPRESSD_COMPRESS
+           
             fi
-            if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_GADGET
-              ./scripts/config --enable CONFIG_USB_CONFIGFS
-              ./scripts/config --enable CONFIG_USB_DWC3_HOST
-              ./scripts/config --enable CONFIG_USB_DWC3_GADGET
+            if fi
+            if [[ "$ [[ "${{ github.event.input{{ github.event.inputs.fes.feature_apple }}"ature_apple }}" == "true" == "true" ]]; then
+              ]]; then
+              ./scripts ./scripts/config --enable CONFIG_KEY/config --enable CONFIG_KEYBOARDBOARD_APPLESPI
+           _APPLESPI
+            fi fi
+            if [[ "$
+            if [[ "${{ github{{ github.event.input.event.inputs.fes.feature_kvm_vature_kvm_vfiofio }}" == "true" ]]; }}" == "true" ]]; then then
+              ./
+              ./scripts/configscripts/config --enable CONFIG --enable CONFIG_KVM_KVM
+              ./scripts
+             /config -- ./scripts/config --enable CONenable CONFIGFIG_KVM_INTEL
             fi
-            if [[ "${{ github.event.inputs.feature_uvc_zstd }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_VIDEO_CLASS
-              ./scripts/config --enable CONFIG_ZSTD_COMPRESS
+            if [[ "${{_KVM_INTEL
             fi
-            if [[ "${{ github.event.inputs.feature_apple }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_KEYBOARD_APPLESPI
+            if [[ "${{ github.event github.event.inputs.inputs.feature.feature_btr_btrfsfs }}" == " }}" == "true"true" ]]; then ]]; then
+             
+              ./scripts/config -- ./scripts/config --module CONmodule CONFIG_BTRFSFIG_BTRFS_FS_FS
+           
+            fi fi
+            if
+            if [[ "${{ github.event.inputs.feature_docker }}" [[ "${{ github.event.inputs.feature_docker }}" == " == "true"true" ]]; then ]]; then
+             
+              ./scripts ./scripts/config --/config --module CONmodule CONFIG_OVERLAYFIG_OVERLAY_FS
+           _FS
+            fi fi
+            if [[ "${{ github
+            if [[ "${{ github.event.inputs.feature_vhd }}".event.inputs.feature_vhd }}" == " == "true" ]]; thentrue" ]]; then
+             
+              ./scripts/config -- ./scriptsenable CON/config --FIG_NTFSenable CONFIG_N3_FTFSS3_F
+            fiS
             fi
-            if [[ "${{ github.event.inputs.feature_kvm_vfio }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_KVM
-              ./scripts/config --enable CONFIG_KVM_INTEL
+            if [[ "${{ github.event.input
+            if [[ "${{ github.event.inputs.fes.feature_usature_usb32b32 }}" == }}" == "true "true" ]];" ]]; then then
+              ./scripts/config --
+              ./enable CONFIGscripts/config --enable_USB CONFIG_XHCI_H_USB_XHCDCI_H
+              ./CDscripts/config
+              ./scripts/config --enable CONFIG_USB_XHCI_P --enable CONFIG_USB_XHCI_PCICI
             fi
-            if [[ "${{ github.event.inputs.feature_btrfs }}" == "true" ]]; then
-              ./scripts/config --module CONFIG_BTRFS_FS
+           
             fi
-            if [[ "${{ github.event.inputs.feature_docker }}" == "true" ]]; then
-              ./scripts/config --module CONFIG_OVERLAY_FS
+            if make if make help | grep - help | grep -q oldq olddefconfigdefconfig; then; then
+             
+              make old make olddefconfig
+           defconfig
+            else else
+              yes "" |
+              yes "" | make old make oldconfigconfig
             fi
-            if [[ "${{ github.event.inputs.feature_vhd }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_NTFS3_FS
+         
             fi
-            if make help | grep -q olddefconfig; then
-              make olddefconfig
-            else
-              yes "" | make oldconfig
-            fi
-          fi
-      - name: 显示关键配置状态 (验证)
+          fi fi
+
+      - name:
+
+      - name: 显示 显示关键配置状态 (关键配置状态 (验证验证)
+        run)
         run: |
-          cd $KERNEL_SRC
-          echo "=== 已启用的配置项 (部分) ==="
-          grep -E "CONFIG_USB_GADGET|CONFIG_USB_DWC3|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_USB_VIDEO_CLASS|CONFIG_KEYBOARD_APPLESPI|CONFIG_ZSTD_COMPRESS|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS" .config || true
-      - name: 编译内核 (生成二进制 deb 包，修复 4.4 源码包检查)
-        run: |
-          cd $KERNEL_SRC
-          # 兼容旧内核的属性警告
-          export KCFLAGS="-Wno-attributes -Wno-error"
-          # 修复 4.4 内核 git 源码包检查错误
-          export KDEB_SOURCECHECK=false
-          if make help | grep -q "bindeb-pkg"; then
+          cd: |
+          cd $KERNEL $K_SRCERNEL_SRC
+         
+          echo "===  echo "=== 已启已启用的配置用的配置项 (项 (部分) ==="部分) ==="
+          grep -
+          grep -E "CONFIGE "CONFIG_USB_USB_GADGET|_GADGET|CONFIGCONFIG_USB_USB_DWC3|_DWC3|CONFIGCON_USBFIG_USB_SERIAL_CH343|CON_SERIAL_CH343|CONFIG_USFIG_USBIP|CONBIPFIG_US|CONB_FIG_USB_VIDEO_CLASSVIDEO_CLASS|CON|CONFIG_KEYFIG_KEYBOARD_APPLBOARD_APPLESPIESPI|CON|CONFIG_ZSTDFIG_ZSTD_COMPRESS|_COMPRCONFIGESS|CONFIG_NT_NTFS3|CONFS3|CONFIG_KFIG_KVM|CONFIGVM|CONFIG_OVER_OVERLAY_FLAY_FS|CONFIGS|_BTRCONFIG_BTRFS_FFS_FS|CONFIGS|CONFIG_ASHMEM|CONFIG_ASHMEM|CONFIG_KPRO_KPROBES|CONBES|CONFIG_KALLSYFIG_KALLSYMS|CONFIGMS|CONFIG_USB_USB_XH_XHCI_HCI_HCD"CD" .config .config || true
+
+      || true
+
+      - name - name: 编译内核: 编译内核 (生成 (生成二进制 deb二进制 deb 包，修复 包，修复 4 4.4 源码.4 源码包检查)
+       包检查)
+        run: run: |
+          |
+          cd $ cd $KERNKERNEL_SEL_SRCRC
+          #
+          # 兼容 兼容旧内核的属性警告旧内核的属性警告
+         
+          export KCFLAGS="-Wno export KCFLAGS="-Wno-attributes-attributes -Wno-error"
+          -Wno-error # "
+          # 修复 4.修复 4.4 4 内核 git内核 git 源码 源码包检查错误包检查错误
+          export
+          export KDE KDEB_SB_SOURCOURCECHECKECHECK=false=false
+          if
+          if make help make help | grep | grep -q -q "bind "bindeb-peb-pkg";kg"; then
+            echo "使用 bindeb-pkg 构建 then
             echo "使用 bindeb-pkg 构建"
-            make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION}
-          else
-            echo "使用 deb-pkg 构建"
-            make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
-          fi
-      - name: 编译 USB/IP 用户空间工具 (如果启用)
-        if: github.event.inputs.feature_usbip == 'true'
+           "
+            make -j$( make -j$(nprocnproc) bind) bindeb-peb-pkg LOCALVERSION=-${KERNkg LOCALVERSION=-${KERNEL_VERSIONEL_VERSION}
+         }
+          else else
+            echo
+            echo "使用 "使用 deb-p deb-pkg kg 构建构建"
+            make"
+            make -j -j$(n$(nproc)proc) deb-p deb-pkg LOCALkg LOCALVERSIONVERSION=-${=-${KKERNERNEL_VERSIONEL_VERSION}
+         }
+          fi fi
+
+      -
+
+      - name: name:  编译编译 USB/IP USB/IP 用户 用户空间工具空间工具 (如果 (如果启用启用)
+        if)
+        if: github: github.event.input.event.inputs.fes.feature_usature_usbipbip == ' == 'truetrue'
+        run'
         run: |
-          cd $KERNEL_SRC/tools/usb/usbip
-          echo "=== 开始编译 USB/IP 工具 ==="
-          ./autogen.sh
-          CFLAGS="-Wno-error" ./configure --prefix=/usr/local
-          make -j$(nproc)
-          mkdir -p /tmp/usbip-tools/usr/local/bin
-          mkdir -p /tmp/usbip-tools/usr/local/lib
-          mkdir -p /tmp/usbip-tools/usr/local/sbin
-          make install DESTDIR=/tmp/usbip-tools
-          find /tmp/usbip-tools -name "*.so*" -exec cp -P {} /tmp/usbip-tools/usr/local/lib/ \; 2>/dev/null || true
-          cat > /tmp/usbip-tools/install.sh << 'EOF'
-          #!/bin/bash
-          echo "安装 USB/IP 工具..."
-          cp -r usr/local/bin/* /usr/local/bin/ 2>/dev/null || true
-          cp -r usr/local/sbin/* /usr/local/sbin/ 2>/dev/null || true
-          cp -r usr/local/lib/* /usr/local/lib/ 2>/dev/null || true
+          cd: |
+          cd $K $KERNEL_SRCERNEL_SRC/tools/tools/usb/usb/usb/usbipip
+          echo
+          echo "=== "=== 开始编译 USB 开始/IP 工具编译 USB ==="/IP 工具 ==
+          ./="
+          ./autogen.shautogen
+          C.shFLAGS
+          CFLAGS="-Wno-error="-Wno-error" ./" ./configure --configure --prefix=/prefix=/usr/localusr/local
+         
+          make - make -j$(j$(nprocnproc)
+         )
+          mkdir -p /tmp mkdir -p /tmp/usb/usbip-tip-tools/ools/usr/localusr/local/bin/bin
+          mk
+          mkdir -dir -p /tmp/usp /tmp/usbip-tools/usr/local/libbip-tools/usr/local/lib
+         
+          mkdir mkdir -p -p /tmp /tmp/usb/usbip-tip-tools/ools/usr/localusr/local/sbin/sbin
+         
+          make install make install DEST DESTDIR=/DIR=/tmp/ustmp/usbipbip-tools
+         -tools
+          find / find /tmp/ustmp/usbipbip-tools -name-tools -name "*. "*.so*so*" -" -exec cpexec cp -P -P {} / {} /tmp/ustmp/usbipbip-tools-tools/usr/usr/local/lib/ \; 2>/dev/local/lib/ \; 2/null ||>/dev/null || true
+          true
+          cat cat > / > /tmp/ustmp/usbipbip-tools/install-tools/install.sh.sh << ' << 'EOFEOF'
+         '
+          #!/ #!/bin/bashbin/bash
+         
+          echo " echo "安装 USB安装 USB/IP /IP 工具工具..."
+          cp..."
+          cp -r -r usr usr/local/bin/local/bin/* //* /usr/localusr/local/bin/bin// 2 2>/dev>/dev/null ||/null || true true
+          cp
+          cp -r -r usr usr/local/s/local/sbin/*bin/* /usr /usr/local/sbin//local/sbin/ 2>/dev 2>/dev/null ||/null || true true
+         
+          cp -r usr/local/lib/* / cp -r usr/local/lib/* /usrusr/local/local/lib/ /lib/2>/dev 2/null ||>/dev/null true
+          ld || trueconfig
           ldconfig
-          echo "USB/IP 工具安装完成！"
-          EOF
-          chmod +x /tmp/usbip-tools/install.sh
-          echo "=== USB/IP 工具编译完成 ==="
-          ls -la /tmp/usbip-tools/usr/local/bin/
-          ls -la /tmp/usbip-tools/usr/local/lib/
-      - name: 收集构建产物 (分离 deb、内核模块、usbip)
-        run: |
-          mkdir -p artifacts
-          # 1. 复制所有 deb 包
-          cp $KERNEL_SRC/../*.deb artifacts/ 2>/dev/null || true
-          echo "=== 收集到的 deb 包 ==="
-          ls -la artifacts/*.deb || echo "未找到 deb 包"
-          # 2. 打包内核模块为 zip
-          cd $KERNEL_SRC
-          MODULE_ZIP="$GITHUB_WORKSPACE/artifacts/${ARTIFACT_NAME}-modules.zip"
-          find . -name "*.ko" -type f | zip -q -@ "${MODULE_ZIP}"
-          find . -name "*.ko" -type f > $GITHUB_WORKSPACE/artifacts/modules-list.txt
-          echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
-          # 3. USB/IP 工具打包
-          if [ -d /tmp/usbip-tools ] && [ -n "$(ls -A /tmp/usbip-tools/usr/local/bin 2>/dev/null)" ]; then
-            cd /tmp
-            tar -czf usbip-tools-linux-${KERNEL_VERSION}.tar.gz usbip-tools/
-            cp usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
+          echo "
+          echoUSB/IP  "USB工具安装/IP 工具安装完成！"
+         完成！ EOF"
+         
+          ch EOFmod +
+          chmod +x /x /tmp/usbip-tools/installtmp/usbip-tools/install.sh
+          echo.sh
+          echo "=== USB/IP 工具 "=== USB/IP 工具编译完成 ==="
+          ls -编译完成la / ==="
+          ls -la /tmp/usbip-tools/usrtmp/usbip-tools/usr/local/bin/local/bin/
+         /
+          ls - ls -la /la /tmp/ustmp/usbipbip-tools-tools/usr/usr/local/lib/local/lib/
+
+     /
+
+      - name - name: : 收集构建收集构建产物 (产物 (分离 deb分离 deb、内核、内核模块、模块、usbusbipip)
+        run)
+        run:: |
+          mk |
+          mkdir -dir -p artifactsp artifacts
+         
+          #  # 1.1. 复制 复制所有 deb所有 deb 包
+          cp $KERNEL_SRC/../*.deb artifacts/ 2>/ 包
+          cp $KERNEL_SRC/../*.deb artifacts/ 2>/dev/nulldev/null || true || true
+          echo "
+          echo "=== === 收集到的收集到的 deb 包 == deb 包 ==="="
+          ls
+          ls -la artifacts -la artifacts/*.deb/*.deb || echo || echo "未 "未找到 deb找到 deb  包"
+         包"
+          #  # 2.2. 打包内核 打包内核模块模块为 zip为 zip
+         
+          cd $KERN cd $KERNEL_SEL_SRC
+          MODULE_ZIP="$RC
+          MODULE_ZIP="$GITHGITHUB_WUB_WORKSPACE/ORKSPACE/artifartifacts/${acts/${ARTIFARTIFACT_NAMEACT_NAME}-modules}-modules.zip.zip"
+          find"
+          find . - . -name "name "*.ko" -*.ko" -type ftype f | zip -q -@ "${MOD | zip -q -@ "${MODULE_ZIP}"
+          findULE_ZIP}"
+          find . -name " . -*.koname "*.ko" -" -type ftype f > $GITH > $GITHUB_WORKUB_WSPACE/ORKSPACE/artifartifacts/modules-listacts/modules-list.txt.txt
+          echo "内核模块已
+          echo "内核模块已打包至: ${打包至ARTIF: ${ARTIFACT_NAME}-modulesACT_NAME.zip}-modules.zip"
+          #"
+          # 3. USB 3. USB/IP 工具打包/IP 工具打包
+          if [ -d
+          if [ -d /tmp /tmp/usbip-t/usbip-tools ]ools ] && && [ -n [ -n "$( "$(ls -ls -A /A /tmp/usbip-toolstmp/usbip-tools/usr/usr/local/bin/local/bin 2 2>/dev>/dev/null)" ]; then/null)" ]; then
+           
+            cd / cd /tmp
+            tartmp
+            tar -cz -czf usf usbipbip-tools-tools-linux-${-linux-${KERNKERNEL_VERSION}.tarEL_VERSION}.tar.gz usbip.gz usbip-tools-tools/
+            cp us/
+            cp usbipbip-tools-tools-linux-${-linux-${KERNKERNEL_VERSIONEL_VERSION}.tar}.tar.gz $GITH.gz $GITHUB_WUB_WORKSPACE/ORKSPACE/artifacts/
+artifacts/
             echo "USB/IP 工具已打包"
+          else            echo "USB/IP 工具已打包"
           else
-            echo "警告: USB/IP 工具目录为空，跳过打包。"
-          fi
-          # 4. 生成说明文件
-          cd $GITHUB_WORKSPACE/artifacts
-          cat > RELEASE_INFO.txt << EOF
-          内核版本：${KERNEL_VERSION}
-          构建时间：$(date)
-          GitHub 运行编号：${{ github.run_number }}
+           
+            echo " echo "警告:警告: USB/IP USB/IP 工具 工具目录为空目录为空，跳过，跳过打包。"
+         打包。"
+          fi fi
+          #
+          # 4 4. . 生成说明生成说明文件文件
+          cd
+          cd $G $GITHUBITHUB_WORK_WORKSPACESPACE/art/artifactsifacts
+         
+          cat > cat > RELEASE RELEASE_INFO.txt_INFO.txt << EOF << EOF
+          
+          内核版本内核版本：${：${KERNKERNEL_VERSIONEL_VERSION}
+          }
+          构建时间构建时间：$(：$(datedate)
+         )
+          GitHub GitHub 运行 运行编号：${{ github.run编号：${{ github.run_number }}
           用户选择的功能：
-          - 基础系统配置: ${{ github.event.inputs.feature_base }}
-          - USB Gadget/UDC: ${{ github.event.inputs.feature_usb_gadget }}
-          - USB 转串口: ${{ github.event.inputs.feature_usb_serial }}
-          - USB/IP: ${{ github.event.inputs.feature_usbip }}
-          - LXC 容器: ${{ github.event.inputs.feature_lxc }}
-          - VHD 启动: ${{ github.event.inputs.feature_vhd }}
-          - UVC/ZSTD: ${{ github.event.inputs.feature_uvc_zstd }}
-          - KVM/VFIO: ${{ github.event.inputs.feature_kvm_vfio }}
-          - Docker/Podman: ${{ github.event.inputs.feature_docker }}
-          - Btrfs: ${{ github.event.inputs.feature_btrfs }}
-          - RTL8xxxU: ${{ github.event.inputs.feature_rtl8xxxu }}
-          - Apple 驱动: ${{ github.event.inputs.feature_apple }}
-          - 杜比音频: ${{ github.event.inputs.feature_dolby }}
-          - Android 容器: ${{ github.event.inputs.feature_android }}
-          - KernelSU 基础: ${{ github.event.inputs.feature_ksu }}
-          - Apache 符号支持: CONFIG_KALLSYMS=y, CONFIG_KALLSYMS_ALL=y
-          产物文件：
-          - *.deb                : 内核安装包
-          - *-modules.zip        : 内核模块 (.ko)
-          - usbip-tools-*.tar.gz : USB/IP 用户空间工具（如启用）
+          - 基础系统配置:_number }}
+          用户选择的功能：
+          - 基础系统配置: ${{ ${{ github.event github.event.inputs.inputs.feature_base.feature_base }}
+          - }}
+          - USB Gad USB Gadget/UDCget/UDC: ${{ github: $.event.input{{ github.event.inputs.fes.feature_usb_gature_usb_gadgetadget }}
+          }}
+          - USB - USB 转 转串口: $串口: ${{ github{{ github.event.input.event.inputs.feature_uss.feature_usb_serialb_serial }}
+          - }}
+          - USB/IP USB/IP: $: ${{ github.event.input{{ github.event.inputs.fes.feature_usature_usbipbip }}
+          }}
+          - LXC  - LXC 容器:容器: ${{ ${{ github.event github.event.inputs.inputs.feature.feature_lxc_lxc }}
+          }}
+          - VHD 启动: - VHD 启动: ${{ ${{ github.event github.event.inputs.inputs.feature_vhd.feature_vhd }}
+          }}
+          - UVC/ZSTD: ${{ github.event.inputs.fe - UVC/ZSTD: ${{ github.event.inputs.feature_ature_uvcuvc_zstd }}
+         _zstd - K }}
+         VM/VFIO - K: $VM/VFIO: ${{{{ github.event github.event.inputs.fe.inputs.feature_kature_kvm_vfiovm_vfio }}
+          }}
+          - Docker - Docker/Pod/Podman:man: ${{ ${{ github.event.inputs github.event.inputs.feature.feature_d_docker }}
+         ocker }}
+          - B - Btrfs: $trfs: ${{ github{{ github.event.input.event.inputs.fes.feature_bature_btrfs }}
+          -trfs }}
+          - RTL8xxx RTL8xxxU: ${{ github.event.inputU: ${{ github.event.inputs.feature_s.feature_rtlrtl8xxx8xxxu }}
+          -u }}
+          - Apple  Apple 驱动: ${{驱动: ${{ github.event github.event.inputs.feature.inputs_apple.feature_apple }}
+          }}
+          - 杜比 - 杜比音频: ${{ github.event音频: ${{ github.event.inputs.inputs.feature.feature_dolby_dolby }}
+          - }}
+          - Android  Android 容器:容器: ${{ ${{ github.event github.event.input.inputs.features.feature_android_android }}
+          }}
+          - Kernel - KernelSU SU 基础: ${{ github.event.inputs.feature_ksu基础: ${{ github.event.inputs.feature_ksu }}
+          - }}
+          - USB  USB 3.2 3.2 支持 (支持 (xHxHCI):CI): ${{ ${{ github.event github.event.inputs.feature_usb.inputs.feature_usb3232 }}
+          - Apache 符号支持: CON }}
+          - Apache 符号支持: CONFIG_KFIG_KALLSYALLSYMS=yMS=y, CON, CONFIG_KFIG_KALLSYALLSYMS_ALL=y
+          MS_ALL=y
+          产物产物文件文件：
+          -：
+          - *.deb *.deb                :                : 内核 内核安装包安装包
+
+          - *          - *-modules.zip        :-modules.zip        : 内核模块 (.ko)
+          - usbip-tools- 内核模块 (.ko)
+          - usbip-tools-*.tar.gz*.tar.gz : USB : USB/IP /IP 用户空间工具（如启用用户空间工具（）
+         如启用 EOF）
           EOF
-      - name: 上传构建产物到临时 Artifact（供 Release 使用）
-        uses: actions/upload-artifact@v4
+
+      - name:
+
+      - 上传 name:构建产物到临时 上传构建产物到临时 Artifact Artifact（供（供 Release  Release 使用使用）
+        uses）
+        uses: actions: actions/upload/upload-artifact-artifact@v@v44
+        with
         with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: artifacts/
-          retention-days: 7
+         :
+          name: name: ${{ ${{ env. env.ARTIFARTIFACT_NAMEACT_NAME }}
+          }}
+          path: path: artifacts artifacts/
+         /
+          retention retention-days-days: : 7
+
+  release7
 
   release:
-    runs-on: ubuntu-24.04
-    needs: build
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-    steps:
-      - name: 下载 Artifact
-        uses: actions/download-artifact@v4
+   :
+    runs-on runs-on: ub: ubuntu-untu-24.24.0404
+    needs
+    needs: build: build
+   
+    if: if: github.event github.event_name ==_name == 'work 'workflow_dflow_dispatch'ispatch' || starts || startsWith(gWith(github.ref, 'ithub.ref, 'refsrefs/tags/tags//')
+    # 显')
+    # 显式授予式授予写入权限写入权限，确保，确保 Release Release 创建 创建和和文件上传成功文件上传成功
+   
+    permissions permissions:
+      contents:
+      contents: write: write
+   
+    steps steps:
+      -:
+      - name: name: 下载 下载 Artifact Artifact
+       
+        uses: uses: actions/download actions/download-artifact-artifact@v@v44
         with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: release-files/
+         
+        with:
+          name: ${{ name: ${{ env. env.ARTIFARTIFACT_NAMEACT_NAME }}
+          }}
+          path: path: release-files release-files/
 
-      - name: 列出待发布文件
+      -/
+
+      - name: 列出 name:待发布 列出待发布文件文件
+        run
         run: |
-          echo "=== release-files 目录内容 ==="
-          ls -la release-files/
-      - name: 创建 GitHub Release 并分别上传文件
-        uses: softprops/action-gh-release@v2
+          echo: |
+          echo "=== "=== release-files  release-files 目录内容目录内容 ==="
+          ===" ls -
+          ls -la releasela release-files/
+
+     -files/
+
+      - name - name: : 创建 GitHub创建 GitHub Release 并分别 Release 并分别上传文件上传文件
+       
+        uses: softprops uses: softprops/action/action--gh-release@gh-release@v2v2
+       
         with:
-          tag_name: v${{ env.KERNEL_VERSION }}-${{ github.run_number }}
-          name: Linux ${{ env.KERNEL_VERSION }} 定制内核
+          tag with:
+          tag_name:_name: v v${{${{ env.KERN env.KERNEL_VERSIONEL_VERSION }}- }}-${{${{ github.run_number github.run_number }}
+          name: Linux }}
+          name: Linux ${{ ${{ env.K env.KERNEL_VERSION }}ERNEL_VERSION }} 定制 定制内核
+          body内核:
           body: |
-            ## 📦 Linux ${{ env.KERNEL_VERSION }} 定制内核
-            **构建时间：** $(date)
-            **用户选择的功能：**
-            - 基础系统配置: ${{ github.event.inputs.feature_base }}
-            - USB Gadget/UDC: ${{ github.event.inputs.feature_usb_gadget }}
-            - USB 转串口: ${{ github.event.inputs.feature_usb_serial }}
-            - USB/IP: ${{ github.event.inputs.feature_usbip }}
-            - LXC 容器: ${{ github.event.inputs.feature_lxc }}
-            - VHD 启动: ${{ github.event.inputs.feature_vhd }}
-            - UVC/ZSTD: ${{ github.event.inputs.feature_uvc_zstd }}
-            - KVM/VFIO: ${{ github.event.inputs.feature_kvm_vfio }}
-            - Docker/Podman: ${{ github.event.inputs.feature_docker }}
-            - Btrfs: ${{ github.event.inputs.feature_btrfs }}
-            - RTL8xxxU: ${{ github.event.inputs.feature_rtl8xxxu }}
-            - Apple 驱动: ${{ github.event.inputs.feature_apple }}
-            - 杜比音频: ${{ github.event.inputs.feature_dolby }}
-            - Android 容器: ${{ github.event.inputs.feature_android }}
-            - KernelSU 基础: ${{ github.event.inputs.feature_ksu }}
-            - **Apache 符号支持**: CONFIG_KALLSYMS=y + CONFIG_KALLSYMS_ALL=y (完整)
-            ### 📁 产物说明
-            - **.deb 文件**：内核镜像、头文件、C 库开发包
-            - **Kernel-Linux-版本-x86_64-modules.zip**：所有内核模块文件（.ko）
-            - **usbip-tools-linux-版本.tar.gz**：USB/IP 用户空间工具（如启用）
-            - **RELEASE_INFO.txt**：构建详细信息
-            ### 🚀 快速安装
+            ## |
+            ## 📦 Linux $ 📦 Linux ${{ env{{ env.KERNEL_VERSION.KERNEL_VERSION }}  }} 定制内核定制内核
+            **构建
+            **构建时间：时间：** $(** $(date)
+date)
+            **           用户选择 **用户选择的功能：**
+           的功能： - **
+            - 基础系统基础系统配置: ${{配置: ${{ github.event github.event.inputs.inputs.feature.feature_base_base }}
+            - }}
+            - USB Gadget/ USB Gadget/UDCUDC: $: ${{ github{{ github.event.inputs.feature_usb_gadget }}
+           .event.inputs.feature_usb_gadget }}
+            - USB 转 - USB 转串口串口: $: ${{ github{{ github.event.input.event.inputs.fes.feature_usature_usb_b_serialserial }}
+            - USB/IP: $ }}
+            - USB/IP: ${{ github{{ github.event.input.event.inputs.fes.feature_usature_usbip }}
+           bip }}
+            - L - LXC XC 容器:容器: ${{ ${{ github.event github.event.inputs.inputs.feature.feature_lxc_lxc }}
+            }}
+            - V - VHD 启动:HD 启动: ${{ github.event ${{ github.event.inputs.inputs.feature.feature_vhd_vhd }}
+            }}
+            - U - UVC/ZVC/ZSTDSTD: $: ${{ github{{ github.event.input.event.inputs.fes.feature_ature_uvcuvc_zstd_zstd }}
+            - KVM/V }}
+            - KVM/VFIOFIO: $: ${{ github{{ github.event.inputs.fe.event.inputs.feature_kature_kvm_vvm_vfiofio }}
+            }}
+            - Docker - Docker/Pod/Podman:man: ${{ ${{ github.event github.event.inputs.inputs.feature_docker.feature_docker }}
+            - B }}
+            - Btrfstrfs: $: ${{ github{{ github.event.input.event.inputs.fes.feature_bature_btrfstrfs }}
+ }}
+            - RTL8xxxU            - RTL: $8xxxU: ${{ github.event.inputs.feature_{{ github.event.inputs.feature_rtlrtl8xxx8xxxuu }}
+            - }}
+            - Apple  Apple 驱动:驱动: ${{ ${{ github.event github.event.inputs.inputs.feature.feature_apple_apple }}
+            }}
+            -  - 杜比杜比音频:音频: ${{ ${{ github.event github.event.inputs.inputs.feature.feature_dol_dolbyby }}
+            - }}
+            - Android  Android 容器:容器: ${{ github.event ${{ github.event.inputs.inputs.feature_android.feature }}
+           _android }}
+            - Kernel - KernelSUSU 基础: ${{ github 基础: ${{ github.event.event.inputs.inputs.feature_ks.feature_ksuu }}
+            - }}
+            - **USB 3 **USB 3.2 支持.2 支持 (x (xHCIHCI)**:)**: ${{ github.event.inputs.feature ${{ github.event.inputs.feature_usb_usb3232 }}
+            - }}
+            - **Apache **Apache 符号 符号支持**:支持**: CONFIG CONFIG_KALLSYMS=y +_KALLSYMS=y + CONFIG CONFIG_KALL_KALLSYMSSYMS_ALL=y_ALL=y (完整 (完整)
+           )
+            ### ### 📁  📁 产物说明产物说明
+           
+            - ** - **.deb.deb 文件 文件**：**：内核镜像内核镜像、头、头文件、文件、C C 库开发库开发包包
+            -
+            - **K **Kernel-Linux-版本-xernel-Linux-版本-x86_86_64-mod64-modules.zipules.zip**：**：所有内核所有内核模块文件模块文件（.（.koko）
+            -）
+            - **us **usbipbip-tools-tools-linux-linux-版本-版本.tar.gz**：.tar.gz**：USB/IP 用户空间工具（如启用USB/IP 用户空间工具（如启用）
+            -）
+            - **RE **RELEASE_INFOLEASE_INFO.txt**.txt**：构建：构建详细信息详细信息
+            ###
+            ### 🚀  🚀 快速安装
+           快速安装 ```bash
             ```bash
-            # 安装内核
-            sudo dpkg -i linux-image-*.deb linux-headers-*.deb linux-libc-dev*.deb
-            # （可选）提取内核模块
-            unzip Kernel-Linux-*-modules.zip -d /lib/modules/
-            # （可选）安装 USB/IP 工具
-            tar -xzf usbip-tools-linux-*.tar.gz
-            cd usbip-tools/
+           
+            #  # 安装内核安装内核
+           
+            sudo dp sudo dpkg -kg -i linux-image-i linux-image-*.deb*.deb linux-head linux-headers-ers-*.deb*.deb linux-l linux-libc-dev*.deb
+           ibc-dev*.deb
+            # （可选 # （可选）提取）提取内核模块内核模块
+           
+            unzip unzip Kernel-L Kernel-Linux-inux-*-*-modulesmodules.zip -.zip -d /d /lib/moduleslib/modules/
+            #/
+            # （可选 （可选）安装 USB/IP 工具）安装 USB/IP 工具
+           
+            tar - tar -xzf usbxzf usbip-tools-lip-tinux-ools-l*.tar.gzinux-*.tar
+            cd.gz usb
+            cd usbip-toolsip-tools/
+            sudo ./install/
             sudo ./install.sh
-            sudo reboot
-          files: |
-            release-files/*.deb
-            release-files/*-modules.zip
-            release-files/usbip-tools-*.tar.gz
-            release-files/RELEASE_INFO.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            sudo.sh
+            sudo reboot reboot
