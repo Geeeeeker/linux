@@ -387,7 +387,8 @@ jobs:
             mv .config.tmp .config
           fi
 
-          if make help | grep -q olddefconfig; then
+          # 稳健地检查 olddefconfig 是否存在（避免 broken pipe）
+          if make -qp 2>/dev/null | grep -q '^olddefconfig:'; then
             make olddefconfig
           else
             echo "olddefconfig 不支持，使用 yes '' | make oldconfig"
@@ -418,7 +419,8 @@ jobs:
             if [[ "${{ github.event.inputs.feature_vhd }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_NTFS3_FS
             fi
-            if make help | grep -q olddefconfig; then
+            # 再次更新配置
+            if make -qp 2>/dev/null | grep -q '^olddefconfig:'; then
               make olddefconfig
             else
               yes "" | make oldconfig
@@ -429,7 +431,7 @@ jobs:
         run: |
           cd $KERNEL_SRC
           echo "=== 已启用的配置项 (部分) ==="
-          grep -E "CONFIG_USB_GADGET|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS" .config || true
+          grep -E "CONFIG_USB_GADGET|CONFIG_USB_DWC3|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS" .config || true
 
       - name: 编译内核 (生成二进制 deb 包)
         run: |
@@ -438,7 +440,7 @@ jobs:
           export KBUILD_CFLAGS="-fno-pie"
           export KCFLAGS="-fno-pie -Wno-attributes -Wno-error"
           export KDEB_SOURCECHECK=false
-          if make help | grep -q "bindeb-pkg"; then
+          if make -qp 2>/dev/null | grep -q '^bindeb-pkg:'; then
             echo "使用 bindeb-pkg 构建"
             make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION}
           else
@@ -460,7 +462,6 @@ jobs:
           make install DESTDIR=/tmp/usbip-tools
           # 显式复制所有动态库
           find /tmp/usbip-tools -name "*.so*" -exec cp -P {} /tmp/usbip-tools/usr/local/lib/ \; 2>/dev/null || true
-          find /tmp/usbip-tools -name "*.so*" -exec echo "库文件: {}" \;
           cat > /tmp/usbip-tools/install.sh << 'EOF'
           #!/bin/bash
           echo "安装 USB/IP 工具..."
@@ -489,7 +490,6 @@ jobs:
           cd $KERNEL_SRC
           MODULE_ZIP="$GITHUB_WORKSPACE/artifacts/${ARTIFACT_NAME}-modules.zip"
           find . -name "*.ko" -type f | zip -q -@ "${MODULE_ZIP}"
-          find . -name "*.ko" -type f > $GITHUB_WORKSPACE/artifacts/modules-list.txt
           echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
 
           # 3. USB/IP 工具打包
