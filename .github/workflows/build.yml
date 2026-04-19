@@ -147,6 +147,24 @@ jobs:
           mv linux-* linux-src
           echo "KERNEL_SRC=$(pwd)/linux-src" >> $GITHUB_ENV
 
+      # ---------- 针对 4.4 内核切换至 GCC 9 ----------
+      - name: 为旧内核切换 GCC 9 (解决 PIC 及属性兼容性)
+        run: |
+          KERNEL_MAJOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f1)
+          KERNEL_MINOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f2)
+          if [[ "$KERNEL_MAJOR" -eq 4 && "$KERNEL_MINOR" -le 4 ]]; then
+            echo "检测到内核版本 <= 4.4，安装并切换至 GCC 9..."
+            sudo apt-get install -y gcc-9 g++-9
+            sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90
+            sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
+            sudo update-alternatives --set gcc /usr/bin/gcc-9
+            sudo update-alternatives --set g++ /usr/bin/g++-9
+            echo "当前 GCC 版本:"
+            gcc --version
+          else
+            echo "内核版本较新，使用默认 GCC。"
+          fi
+
       - name: 生成主线默认配置
         run: |
           cd $KERNEL_SRC
@@ -387,8 +405,7 @@ jobs:
             mv .config.tmp .config
           fi
 
-          # 稳健地检查 olddefconfig 是否存在（避免 broken pipe）
-          if make -qp 2>/dev/null | grep -q '^olddefconfig:'; then
+          if make help 2>/dev/null | grep -q olddefconfig; then
             make olddefconfig
           else
             echo "olddefconfig 不支持，使用 yes '' | make oldconfig"
@@ -405,6 +422,8 @@ jobs:
             if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_USB_GADGET
               ./scripts/config --enable CONFIG_USB_CONFIGFS
+              ./scripts/config --enable CONFIG_USB_DWC3_HOST
+              ./scripts/config --enable CONFIG_USB_DWC3_GADGET
             fi
             if [[ "${{ github.event.inputs.feature_kvm_vfio }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_KVM
@@ -419,8 +438,7 @@ jobs:
             if [[ "${{ github.event.inputs.feature_vhd }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_NTFS3_FS
             fi
-            # 再次更新配置
-            if make -qp 2>/dev/null | grep -q '^olddefconfig:'; then
+            if make help 2>/dev/null | grep -q olddefconfig; then
               make olddefconfig
             else
               yes "" | make oldconfig
@@ -430,17 +448,30 @@ jobs:
       - name: 显示关键配置状态 (验证)
         run: |
           cd $KERNEL_SRC
-          echo "=== 已启用的配置项 (部分) ==="
-          grep -E "CONFIG_USB_GADGET|CONFIG_USB_DWC3|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS" .config || true
+          echo "=== USB Gadget / DWC3 配置 ==="
+          grep -E "CONFIG_USB_GADGET|CONFIG_USB_DWC3" .config | head -15 || true
+          echo "=== USB 转串口 CH343P ==="
+          grep "CONFIG_USB_SERIAL_CH343" .config || true
+          echo "=== USB/IP ==="
+          grep "CONFIG_USBIP" .config || true
+          echo "=== UVC 摄像头 ==="
+          grep "CONFIG_USB_VIDEO_CLASS" .config || echo "未启用"
+          echo "=== Apple SPI 键盘 ==="
+          grep "CONFIG_KEYBOARD_APPLESPI" .config || echo "未启用"
+          echo "=== ZSTD ==="
+          grep "CONFIG_ZSTD_COMPRESS" .config || echo "未启用"
+          echo "=== 其他关键项 ==="
+          grep -E "CONFIG_NTFS3|CONFIG_BTRFS_FS|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_RTL8XXXU" .config | head -10 || true
 
       - name: 编译内核 (生成二进制 deb 包)
         run: |
           cd $KERNEL_SRC
           # 修复旧内核（如 4.4）PIC 错误和源码包检查
-          export KBUILD_CFLAGS="-fno-pie"
+          export KBUILD_CFLAGS="-fno-pie -Wno-attributes"
           export KCFLAGS="-fno-pie -Wno-attributes -Wno-error"
           export KDEB_SOURCECHECK=false
-          if make -qp 2>/dev/null | grep -q '^bindeb-pkg:'; then
+          # 稳健检测是否支持 bindeb-pkg
+          if grep -q "^bindeb-pkg:" scripts/package/Makefile 2>/dev/null; then
             echo "使用 bindeb-pkg 构建"
             make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION}
           else
@@ -462,6 +493,7 @@ jobs:
           make install DESTDIR=/tmp/usbip-tools
           # 显式复制所有动态库
           find /tmp/usbip-tools -name "*.so*" -exec cp -P {} /tmp/usbip-tools/usr/local/lib/ \; 2>/dev/null || true
+          find /tmp/usbip-tools -name "*.so*" -exec echo "库文件: {}" \;
           cat > /tmp/usbip-tools/install.sh << 'EOF'
           #!/bin/bash
           echo "安装 USB/IP 工具..."
@@ -490,6 +522,7 @@ jobs:
           cd $KERNEL_SRC
           MODULE_ZIP="$GITHUB_WORKSPACE/artifacts/${ARTIFACT_NAME}-modules.zip"
           find . -name "*.ko" -type f | zip -q -@ "${MODULE_ZIP}"
+          find . -name "*.ko" -type f > $GITHUB_WORKSPACE/artifacts/modules-list.txt
           echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
 
           # 3. USB/IP 工具打包
