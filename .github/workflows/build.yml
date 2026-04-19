@@ -390,7 +390,7 @@ jobs:
           EOF
           fi
 
-      - name: 应用自定义配置 (兼容所有内核版本)
+      - name: 应用自定义配置 (兼容所有内核版本，修复 broken pipe 错误)
         run: |
           cd $KERNEL_SRC
           if [ -f scripts/kconfig/merge_config.sh ]; then
@@ -402,10 +402,12 @@ jobs:
             cat custom-features.cfg >> .config.tmp
             mv .config.tmp .config
           fi
-          if make help | grep -q olddefconfig; then
-            make olddefconfig
+          # 修复 broken pipe：直接尝试 olddefconfig，失败则回退
+          echo "正在解析配置依赖..."
+          if make olddefconfig 2>/dev/null; then
+            echo "已使用 olddefconfig 更新配置。"
           else
-            echo "olddefconfig 不支持，使用 yes '' | make oldconfig"
+            echo "olddefconfig 不可用，改用 yes '' | make oldconfig"
             yes "" | make oldconfig
           fi
 
@@ -446,8 +448,9 @@ jobs:
             if [[ "${{ github.event.inputs.feature_vhd }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_NTFS3_FS
             fi
-            if make help | grep -q olddefconfig; then
-              make olddefconfig
+            # 再次解析依赖
+            if make olddefconfig 2>/dev/null; then
+              echo "已使用 olddefconfig 更新配置。"
             else
               yes "" | make oldconfig
             fi
