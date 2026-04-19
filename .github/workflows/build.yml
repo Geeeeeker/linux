@@ -18,6 +18,58 @@ on:
         description: '自定义内核版本号（用于包名）'
         required: true
         default: '7.0.0-custom'
+      feature_usb_gadget:
+        description: 'USB Gadget / UDC / libcomposite'
+        type: boolean
+        default: true
+      feature_usb_serial:
+        description: 'USB 转串口 (CH340/CH341, CH343P)'
+        type: boolean
+        default: true
+      feature_usbip:
+        description: 'USB/IP 支持 (内核 + 用户空间工具)'
+        type: boolean
+        default: true
+      feature_lxc:
+        description: 'LXC 容器完整支持'
+        type: boolean
+        default: true
+      feature_vhd:
+        description: 'VHD 启动支持 (loop + NTFS3)'
+        type: boolean
+        default: true
+      feature_uvc:
+        description: 'UVC 摄像头支持'
+        type: boolean
+        default: true
+      feature_zstd:
+        description: 'ZSTD 压缩支持'
+        type: boolean
+        default: true
+      feature_kvm_vfio:
+        description: 'KVM + VFIO + Intel GVT-g 直通'
+        type: boolean
+        default: true
+      feature_docker:
+        description: 'Docker / Podman 完整支持'
+        type: boolean
+        default: true
+      feature_btrfs:
+        description: 'Btrfs 文件系统支持 (模块)'
+        type: boolean
+        default: true
+      feature_rtl8xxxu:
+        description: 'RTL8XXXU 无线网卡支持 (模块)'
+        type: boolean
+        default: true
+      feature_apple:
+        description: 'Apple Mac 设备驱动'
+        type: boolean
+        default: true
+      feature_dolby:
+        description: '杜比音频支持 (HDMI/DP)'
+        type: boolean
+        default: true
 
 env:
   KERNEL_REPO: ${{ github.event.inputs.kernel_repo || 'https://github.com/Geeeeeker/linux' }}
@@ -47,29 +99,13 @@ jobs:
             libusb-1.0-0-dev libxml2-dev \
             debhelper libdw-dev
 
-      - name: 打印编译环境信息 (CPU/GPU/NPU)
+      - name: 打印编译环境信息
         run: |
           echo "=== 编译环境硬件信息 ==="
           echo "CPU 信息:"
-          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread|Core|Socket"
-          echo ""
-          echo "GPU 信息 (如果有):"
-          if command -v lspci &> /dev/null; then
-            lspci | grep -E "VGA|3D|Display" || echo "未检测到 PCI 显卡设备"
-          else
-            echo "lspci 命令不可用"
-          fi
-          echo ""
-          echo "NPU 信息 (如果有):"
-          if command -v lspci &> /dev/null; then
-            lspci | grep -i "neural\|npu\|ai" || echo "未检测到 NPU 设备"
-          else
-            echo "lspci 命令不可用"
-          fi
-          echo ""
+          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread|Core|Socket" || true
           echo "内存信息:"
           free -h
-          echo ""
           echo "操作系统信息:"
           lsb_release -a 2>/dev/null || cat /etc/os-release
 
@@ -80,24 +116,15 @@ jobs:
           cd linux-src
           echo "KERNEL_SRC=$(pwd)" >> $GITHUB_ENV
 
-      - name: 集成 CH343P 驱动
+      - name: 集成 CH343P 驱动源码
+        if: github.event.inputs.feature_usb_serial == 'true'
         run: |
           cd $KERNEL_SRC
-          if ! grep -q "config USB_SERIAL_CH343" drivers/usb/serial/Kconfig; then
-            echo "" >> drivers/usb/serial/Kconfig
-            echo "config USB_SERIAL_CH343" >> drivers/usb/serial/Kconfig
-            echo "	tristate \"CH343 USB serial driver\"" >> drivers/usb/serial/Kconfig
-            echo "	help" >> drivers/usb/serial/Kconfig
-            echo "	  Say Y here to include support for CH343 USB to serial adapter." >> drivers/usb/serial/Kconfig
-          fi
-          if ! grep -q "obj-\$(CONFIG_USB_SERIAL_CH343)" drivers/usb/serial/Makefile; then
-            echo "obj-\$(CONFIG_USB_SERIAL_CH343) += ch343.o" >> drivers/usb/serial/Makefile
-          fi
           if [ ! -f drivers/usb/serial/ch343.c ]; then
-            wget https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c
+            wget -q https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c
           fi
           if [ ! -f drivers/usb/serial/ch343.h ]; then
-            wget https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h
+            wget -q https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h
           fi
 
       - name: 生成主线默认配置
@@ -105,11 +132,11 @@ jobs:
           cd $KERNEL_SRC
           make defconfig
 
-      - name: 创建自定义内核配置片段
+      - name: 创建按需自定义内核配置片段
         run: |
           cd $KERNEL_SRC
+          # 基础配置始终启用
           cat > custom-features.cfg << 'EOF'
-          # ========== 基础系统支持 ==========
           CONFIG_SYSVIPC=y
           CONFIG_SYSVIPC_SYSCTL=y
           CONFIG_SYSVIPC_COMPAT=y
@@ -121,8 +148,71 @@ jobs:
           CONFIG_TMPFS=y
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_TMPFS_XATTR=y
+          CONFIG_DEVTMPFS=y
+          CONFIG_DEVTMPFS_MOUNT=y
+          CONFIG_MODULES=y
+          CONFIG_MODULE_UNLOAD=y
+          CONFIG_IKCONFIG=y
+          CONFIG_IKCONFIG_PROC=y
+          CONFIG_KALLSYMS=y
+          CONFIG_KALLSYMS_ALL=y
+          EOF
 
-          # ========== LXC 容器所需 ==========
+          # USB Gadget
+          if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_USB_GADGET=y
+          CONFIG_USB_CONFIGFS=y
+          CONFIG_USB_CONFIGFS_F_FS=y
+          CONFIG_USB_LIBCOMPOSITE=y
+          CONFIG_USB_DWC3=y
+          CONFIG_USB_DWC3_HOST=y
+          CONFIG_USB_DWC3_GADGET=y
+          CONFIG_USB_DWC3_DUAL_ROLE=y
+          CONFIG_USB_CONFIGFS_MASS_STORAGE=y
+          CONFIG_USB_F_MASS_STORAGE=y
+          CONFIG_USB_CONFIGFS_SERIAL=y
+          CONFIG_USB_CONFIGFS_ACM=y
+          CONFIG_USB_CONFIGFS_RNDIS=y
+          CONFIG_USB_CONFIGFS_F_LB_SS=y
+          CONFIG_USB_MASS_STORAGE=y
+          EOF
+          fi
+
+          # USB 转串口
+          if [[ "${{ github.event.inputs.feature_usb_serial }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_USB_SERIAL=y
+          CONFIG_USB_SERIAL_GENERIC=y
+          CONFIG_USB_SERIAL_CH341=y
+          CONFIG_USB_SERIAL_CH343=m
+          EOF
+            # 添加 Kconfig 和 Makefile 条目
+            if ! grep -q "config USB_SERIAL_CH343" drivers/usb/serial/Kconfig; then
+              echo "" >> drivers/usb/serial/Kconfig
+              echo "config USB_SERIAL_CH343" >> drivers/usb/serial/Kconfig
+              echo "	tristate \"CH343 USB serial driver\"" >> drivers/usb/serial/Kconfig
+              echo "	help" >> drivers/usb/serial/Kconfig
+              echo "	  Say Y here to include support for CH343 USB to serial adapter." >> drivers/usb/serial/Kconfig
+            fi
+            if ! grep -q "obj-\$(CONFIG_USB_SERIAL_CH343)" drivers/usb/serial/Makefile; then
+              echo "obj-\$(CONFIG_USB_SERIAL_CH343) += ch343.o" >> drivers/usb/serial/Makefile
+            fi
+          fi
+
+          # USB/IP
+          if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_USBIP_CORE=y
+          CONFIG_USBIP_VHCI_HCD=y
+          CONFIG_USBIP_HOST=y
+          CONFIG_USBIP_VHCI_HC_PORTS=8
+          EOF
+          fi
+
+          # LXC 容器
+          if [[ "${{ github.event.inputs.feature_lxc }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
           CONFIG_NAMESPACES=y
           CONFIG_CGROUPS=y
           CONFIG_UTS_NS=y
@@ -149,78 +239,23 @@ jobs:
           CONFIG_IP_NF_TARGET_MASQUERADE=y
           CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
           CONFIG_NETFILTER_XT_MATCH_IPVS=y
+          EOF
+          fi
 
-          # ========== USB Gadget / UDC ==========
-          CONFIG_USB_GADGET=y
-          CONFIG_USB_CONFIGFS=y
-          CONFIG_USB_CONFIGFS_F_FS=y
-          CONFIG_USB_LIBCOMPOSITE=y
-          CONFIG_USB_DWC3=y
-          CONFIG_USB_DWC3_HOST=y
-          CONFIG_USB_DWC3_GADGET=y
-          CONFIG_USB_DWC3_DUAL_ROLE=y
-
-          # ========== USB Gadget 功能 ==========
-          CONFIG_USB_CONFIGFS_MASS_STORAGE=y
-          CONFIG_USB_F_MASS_STORAGE=y
-          CONFIG_USB_CONFIGFS_SERIAL=y
-          CONFIG_USB_CONFIGFS_ACM=y
-          CONFIG_USB_CONFIGFS_RNDIS=y
-          CONFIG_USB_CONFIGFS_F_LB_SS=y
-          CONFIG_USB_MASS_STORAGE=y
-
-          # ========== USB 转串口 ==========
-          CONFIG_USB_SERIAL=y
-          CONFIG_USB_SERIAL_GENERIC=y
-          CONFIG_USB_SERIAL_CH341=y
-          CONFIG_USB_SERIAL_CH343=m
-
-          # ========== USB/IP ==========
-          CONFIG_USBIP_CORE=y
-          CONFIG_USBIP_VHCI_HCD=y
-          CONFIG_USBIP_HOST=y
-          CONFIG_USBIP_VHCI_HC_PORTS=8
-          CONFIG_USBIP_DEBUG=n
-
-          # ========== VHD 启动支持 ==========
+          # VHD 启动
+          if [[ "${{ github.event.inputs.feature_vhd }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
           CONFIG_BLK_DEV_LOOP=y
           CONFIG_NTFS3_FS=y
           CONFIG_NTFS3_LZX_XPRESS=y
           CONFIG_NTFS_FS=n
+          EOF
+          fi
 
-          # ========== 文件系统支持 ==========
-          CONFIG_BTRFS_FS=m
-          CONFIG_BTRFS_FS_POSIX_ACL=y
-
-          # ========== UVC、ZSTD、KVM、VFIO ==========
+          # UVC 摄像头
+          if [[ "${{ github.event.inputs.feature_uvc }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_VIDEO_CLASS=y
-          CONFIG_ZSTD_COMPRESS=y
-          CONFIG_ZSTD_DECOMPRESS=y
-          CONFIG_KVM=y
-          CONFIG_KVM_INTEL=y
-          CONFIG_VFIO=y
-          CONFIG_VFIO_PCI=y
-          CONFIG_VFIO_IOMMU_TYPE1=y
-          CONFIG_VFIO_MDEV=y
-          CONFIG_DRM_I915_GVT=y
-          CONFIG_DRM_I915_GVT_KVMGT=y
-
-          # ========== Docker & Podman 完整支持 ==========
-          CONFIG_OVERLAY_FS=m
-          CONFIG_FUSE_FS=m
-          CONFIG_SECCOMP=y
-          CONFIG_SECCOMP_FILTER=y
-          CONFIG_TUN=m
-          CONFIG_NETFILTER_XT_MATCH_CONNTRACK=m
-          CONFIG_IP_NF_FILTER=m
-          CONFIG_IP_NF_NAT=m
-          CONFIG_CGROUP_BPF=y
-
-          # ========== 无线网卡支持 (RTL8xxxU) ==========
-          CONFIG_RTL8XXXU=m
-          CONFIG_RTL8XXXU_UNTESTED=y
-
-          # ========== V4L2 / Media 框架完整支持 ==========
           CONFIG_MEDIA_SUPPORT=y
           CONFIG_MEDIA_CAMERA_SUPPORT=y
           CONFIG_MEDIA_CONTROLLER=y
@@ -233,8 +268,65 @@ jobs:
           CONFIG_VIDEOBUF2_DMA_SG=y
           CONFIG_V4L_PLATFORM_DRIVERS=y
           CONFIG_V4L_MEM2MEM_DRIVERS=y
+          EOF
+          fi
 
-          # ========== Apple Mac 设备驱动支持 ==========
+          # ZSTD
+          if [[ "${{ github.event.inputs.feature_zstd }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_ZSTD_COMPRESS=y
+          CONFIG_ZSTD_DECOMPRESS=y
+          EOF
+          fi
+
+          # KVM / VFIO
+          if [[ "${{ github.event.inputs.feature_kvm_vfio }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_KVM=y
+          CONFIG_KVM_INTEL=y
+          CONFIG_VFIO=y
+          CONFIG_VFIO_PCI=y
+          CONFIG_VFIO_IOMMU_TYPE1=y
+          CONFIG_VFIO_MDEV=y
+          CONFIG_DRM_I915_GVT=y
+          CONFIG_DRM_I915_GVT_KVMGT=y
+          EOF
+          fi
+
+          # Docker / Podman
+          if [[ "${{ github.event.inputs.feature_docker }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_OVERLAY_FS=m
+          CONFIG_FUSE_FS=m
+          CONFIG_SECCOMP=y
+          CONFIG_SECCOMP_FILTER=y
+          CONFIG_TUN=m
+          CONFIG_NETFILTER_XT_MATCH_CONNTRACK=m
+          CONFIG_IP_NF_FILTER=m
+          CONFIG_IP_NF_NAT=m
+          CONFIG_CGROUP_BPF=y
+          EOF
+          fi
+
+          # Btrfs
+          if [[ "${{ github.event.inputs.feature_btrfs }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_BTRFS_FS=m
+          CONFIG_BTRFS_FS_POSIX_ACL=y
+          EOF
+          fi
+
+          # RTL8XXXU
+          if [[ "${{ github.event.inputs.feature_rtl8xxxu }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_RTL8XXXU=m
+          CONFIG_RTL8XXXU_UNTESTED=y
+          EOF
+          fi
+
+          # Apple 驱动
+          if [[ "${{ github.event.inputs.feature_apple }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
           CONFIG_USB4=m
           CONFIG_MOUSE_BCM5974=y
           CONFIG_HID_MAGICMOUSE=y
@@ -242,22 +334,19 @@ jobs:
           CONFIG_HID_APPLE=y
           CONFIG_KEYBOARD_APPLESPI=y
           CONFIG_SENSORS_APPLESMC=y
+          EOF
+          fi
 
-          # ========== 杜比音频支持 (HDMI/DP 音频) ==========
+          # 杜比音频
+          if [[ "${{ github.event.inputs.feature_dolby }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
           CONFIG_SND_HDA_INTEL=y
           CONFIG_SND_HDA_CODEC_HDMI=y
           CONFIG_SND_HDA_CODEC_DOLBY=y
           CONFIG_SND_HDA_CODEC_CIRRUS=y
           CONFIG_SND_HDA_CODEC_CS8409=y
-
-          # ========== 其他推荐功能 ==========
-          CONFIG_MODULES=y
-          CONFIG_MODULE_UNLOAD=y
-          CONFIG_IKCONFIG=y
-          CONFIG_IKCONFIG_PROC=y
-          CONFIG_DEVTMPFS=y
-          CONFIG_DEVTMPFS_MOUNT=y
           EOF
+          fi
 
       - name: 合并自定义配置并生成最终配置
         run: |
@@ -265,32 +354,51 @@ jobs:
           scripts/kconfig/merge_config.sh -m .config custom-features.cfg
           make olddefconfig
 
-      - name: 强制启用 DWC3 主机/设备模式 (修复 Gadget 支持)
+      - name: 二次确认关键选项（确保依赖满足后仍为 y/m）
         run: |
           cd $KERNEL_SRC
-          scripts/config --enable CONFIG_USB_DWC3_HOST
-          scripts/config --enable CONFIG_USB_DWC3_GADGET
-          scripts/config --enable CONFIG_USB_DWC3_DUAL_ROLE
+          if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
+            scripts/config --enable CONFIG_USB_DWC3_HOST
+            scripts/config --enable CONFIG_USB_DWC3_GADGET
+          fi
+          if [[ "${{ github.event.inputs.feature_uvc }}" == "true" ]]; then
+            scripts/config --enable CONFIG_USB_VIDEO_CLASS
+          fi
+          if [[ "${{ github.event.inputs.feature_apple }}" == "true" ]]; then
+            scripts/config --enable CONFIG_KEYBOARD_APPLESPI
+          fi
+          if [[ "${{ github.event.inputs.feature_zstd }}" == "true" ]]; then
+            scripts/config --enable CONFIG_ZSTD_COMPRESS
+          fi
           make olddefconfig
 
-      - name: 显示关键配置状态（用于验证）
+      - name: 显示关键配置状态（验证）
         run: |
           cd $KERNEL_SRC
-          echo "=== USB Gadget / UDC 配置 ==="
-          grep -E "CONFIG_USB_GADGET|CONFIG_USB_CONFIGFS|CONFIG_USB_DWC3" .config | head -15 || true
-          echo "=== USB 转串口 (CH343P) ==="
+          echo "=== USB Gadget / DWC3 ==="
+          grep -E "CONFIG_USB_GADGET|CONFIG_USB_DWC3" .config | head -10 || true
+          echo "=== USB 转串口 CH343P ==="
           grep "CONFIG_USB_SERIAL_CH343" .config || true
           echo "=== USB/IP ==="
           grep "CONFIG_USBIP" .config || true
+          echo "=== UVC 摄像头 ==="
+          grep "CONFIG_USB_VIDEO_CLASS" .config || echo "未启用"
+          echo "=== Apple SPI 键盘 ==="
+          grep "CONFIG_KEYBOARD_APPLESPI" .config || echo "未启用"
+          echo "=== ZSTD ==="
+          grep "CONFIG_ZSTD_COMPRESS" .config || echo "未启用"
           echo "=== 其他关键项 ==="
-          grep -E "CONFIG_NTFS3|CONFIG_BTRFS|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_RTL8XXXU" .config || true
+          grep -E "CONFIG_NTFS3|CONFIG_BTRFS_FS|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_RTL8XXXU" .config | head -10 || true
 
       - name: 编译内核（生成 deb 包）
         run: |
           cd $KERNEL_SRC
+          # 兼容旧内核 (如 4.4) 的属性冲突警告
+          export KCFLAGS="-Wno-attributes -Wno-error"
           make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
 
       - name: 编译 USB/IP 用户空间工具
+        if: github.event.inputs.feature_usbip == 'true'
         run: |
           cd $KERNEL_SRC/tools/usb/usbip
           echo "=== 开始编译 USB/IP 工具 ==="
@@ -321,7 +429,7 @@ jobs:
         run: |
           mkdir -p artifacts
 
-          # 1. 复制所有 deb 包到 artifacts 根目录
+          # 1. 复制所有 deb 包
           cp $KERNEL_SRC/../*.deb artifacts/ 2>/dev/null || true
           echo "=== 收集到的 deb 包 ==="
           ls -la artifacts/*.deb || echo "未找到 deb 包"
@@ -332,12 +440,12 @@ jobs:
           find . -name "*.ko" -type f | zip -q -@ "${MODULE_ZIP}"
           echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
 
-          # 3. 复制 USB/IP 工具包到 artifacts 根目录 (修复路径错误)
+          # 3. 复制 USB/IP 工具包（如果存在）
           if [ -f /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz ]; then
             cp /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
             echo "USB/IP 工具包已复制"
           else
-            echo "警告: USB/IP 工具包未找到，跳过"
+            echo "未启用 USB/IP 或打包失败，跳过"
           fi
 
           # 4. 生成说明文件
@@ -348,30 +456,25 @@ jobs:
           构建时间：$(date)
           GitHub 运行编号：${{ github.run_number }}
 
-          包含的软件包：
-          - linux-image-*.deb：内核镜像
-          - linux-headers-*.deb：内核头文件
-          - linux-libc-dev_*.deb：内核 C 库头文件
+          用户选择的功能：
+          - USB Gadget/UDC: ${{ github.event.inputs.feature_usb_gadget }}
+          - USB 转串口: ${{ github.event.inputs.feature_usb_serial }}
+          - USB/IP: ${{ github.event.inputs.feature_usbip }}
+          - LXC 容器: ${{ github.event.inputs.feature_lxc }}
+          - VHD 启动: ${{ github.event.inputs.feature_vhd }}
+          - UVC 摄像头: ${{ github.event.inputs.feature_uvc }}
+          - ZSTD 压缩: ${{ github.event.inputs.feature_zstd }}
+          - KVM/VFIO: ${{ github.event.inputs.feature_kvm_vfio }}
+          - Docker/Podman: ${{ github.event.inputs.feature_docker }}
+          - Btrfs: ${{ github.event.inputs.feature_btrfs }}
+          - RTL8xxxU: ${{ github.event.inputs.feature_rtl8xxxu }}
+          - Apple 驱动: ${{ github.event.inputs.feature_apple }}
+          - 杜比音频: ${{ github.event.inputs.feature_dolby }}
 
-          内核模块打包文件：${ARTIFACT_NAME}-modules.zip
-          USB/IP 用户空间工具包：usbip-tools-linux-${KERNEL_VERSION}.tar.gz
-
-          已启用的关键功能：
-          - 基础系统配置（SYSVIPC、EPOLL、TMPFS 等）
-          - USB Gadget / UDC / libcomposite（强制启用 DWC3 双角色模式）
-          - USB 转串口驱动（CH340/CH341, CH343P 作为模块）
-          - USB/IP（内核驱动 + 用户空间工具）
-          - LXC 容器完整支持
-          - VHD 启动支持（NTFS3）
-          - UVC 摄像头、ZSTD 压缩
-          - KVM + VFIO + Intel GVT-g 直通
-          - Docker/Podman 完整支持
-          - Btrfs 文件系统支持（模块）
-          - RTL8xxxU 无线网卡支持（模块）
-          - Apple Mac 设备驱动
-          - 杜比音频支持
-
-          注意：Facetime HD 驱动由于 V4L2 符号不兼容，未包含在此次构建中。
+          产物文件：
+          - *.deb                : 内核安装包
+          - *-modules.zip        : 内核模块
+          - usbip-tools-*.tar.gz : USB/IP 用户空间工具（如启用）
           EOF
 
           echo "=== artifacts 目录最终内容 ==="
@@ -388,7 +491,6 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-    
     steps:
       - name: 下载产物
         uses: actions/download-artifact@v4
@@ -408,44 +510,44 @@ jobs:
           name: Linux ${{ env.KERNEL_VERSION }} 定制内核
           body: |
             ## 📦 Linux ${{ env.KERNEL_VERSION }} 定制内核
-            
+
             **源码仓库：** ${{ env.KERNEL_REPO }} (ref: ${{ env.KERNEL_REF }})
             **构建时间：** $(date)
-            
-            ### ✨ 已启用的功能
-            - ✅ 基础系统配置（SYSVIPC、EPOLL、TMPFS 等）
-            - ✅ USB Gadget / UDC / libcomposite（强制 DWC3 双角色模式）
-            - ✅ USB 转串口：CH340/CH341、CH343P（模块）
-            - ✅ USB/IP（内核驱动 + 用户空间工具）
-            - ✅ LXC 容器完整支持
-            - ✅ VHD 启动支持（NTFS3）
-            - ✅ UVC 摄像头、ZSTD 压缩
-            - ✅ KVM + VFIO + Intel GVT-g 直通
-            - ✅ Docker/Podman 完整支持
-            - ✅ Btrfs 文件系统支持（模块）
-            - ✅ RTL8xxxU 无线网卡支持（模块）
-            - ✅ Apple Mac 设备驱动
-            - ✅ 杜比音频支持
-            
-            ### 📁 产物文件
+
+            ### ✨ 用户选择的功能
+            - USB Gadget/UDC: ${{ github.event.inputs.feature_usb_gadget }}
+            - USB 转串口: ${{ github.event.inputs.feature_usb_serial }}
+            - USB/IP: ${{ github.event.inputs.feature_usbip }}
+            - LXC 容器: ${{ github.event.inputs.feature_lxc }}
+            - VHD 启动: ${{ github.event.inputs.feature_vhd }}
+            - UVC 摄像头: ${{ github.event.inputs.feature_uvc }}
+            - ZSTD 压缩: ${{ github.event.inputs.feature_zstd }}
+            - KVM/VFIO: ${{ github.event.inputs.feature_kvm_vfio }}
+            - Docker/Podman: ${{ github.event.inputs.feature_docker }}
+            - Btrfs: ${{ github.event.inputs.feature_btrfs }}
+            - RTL8xxxU: ${{ github.event.inputs.feature_rtl8xxxu }}
+            - Apple 驱动: ${{ github.event.inputs.feature_apple }}
+            - 杜比音频: ${{ github.event.inputs.feature_dolby }}
+
+            ### 📁 产物说明
             - **.deb 文件**：内核镜像、头文件、C 库开发包
             - **modules.zip**：所有内核模块文件（.ko）
-            - **usbip-tools-*.tar.gz**：USB/IP 用户空间工具（含安装脚本）
+            - **usbip-tools-*.tar.gz**：USB/IP 用户空间工具（如启用）
             - **RELEASE_INFO.txt**：构建详细信息
-            
+
             ### 🚀 快速安装
             ```bash
             # 安装内核
             sudo dpkg -i linux-image-*.deb linux-headers-*.deb linux-libc-dev*.deb
-            
+
             # （可选）提取内核模块
             unzip *-modules.zip -d /lib/modules/
-            
+
             # （可选）安装 USB/IP 工具
             tar -xzf usbip-tools-linux-*.tar.gz
             cd usbip-tools/
             sudo ./install.sh
-            
+
             sudo reboot
           files: |
             release-files/*.deb
