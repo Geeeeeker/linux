@@ -107,7 +107,7 @@ jobs:
       - name: 检出本仓库
         uses: actions/checkout@v4
 
-      - name: 安装编译依赖 (包含旧版 GCC)
+      - name: 安装编译依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -117,9 +117,19 @@ jobs:
             libusb-1.0-0-dev libxml2-dev \
             debhelper libdw-dev
 
-          # 安装旧版 GCC 用于编译老内核
-          sudo apt-get install -y gcc-9 g++-9 || true
-          sudo apt-get install -y gcc-10 g++-10 || true
+      - name: 为旧内核安装 GCC 9（兼容性）
+        run: |
+          KERNEL_MAJOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f1)
+          if [[ "$KERNEL_MAJOR" -lt 5 ]]; then
+            echo "检测到旧内核版本 (${{ env.KERNEL_VERSION }})，安装 GCC 9 以解决兼容性问题..."
+            sudo apt-get install -y gcc-9 g++-9
+            sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90
+            sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
+            echo "当前 GCC 版本:"
+            gcc --version
+          else
+            echo "内核版本 >=5.0，使用默认 GCC。"
+          fi
 
       - name: 打印编译环境信息
         run: |
@@ -147,38 +157,14 @@ jobs:
           echo "下载 Linux ${KERNEL_VERSION} 源码..."
           wget -q "https://github.com/torvalds/linux/archive/refs/tags/v${KERNEL_VERSION}.tar.gz" -O linux.tar.gz
 
-      # ---------- 解压源码，无编译缓存 ----------
+      # ---------- 解压源码，无编译缓存，每次全新构建 ----------
       - name: 解压源码并设置工作目录
         run: |
           tar -xzf linux.tar.gz
           mv linux-* linux-src
           echo "KERNEL_SRC=$(pwd)/linux-src" >> $GITHUB_ENV
 
-      # ---------- 选择合适的 GCC 版本 ----------
-      - name: 根据内核版本选择 GCC
-        id: select-gcc
-        run: |
-          KERNEL_MAJOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f1)
-          KERNEL_MINOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f2)
-          if [[ "$KERNEL_MAJOR" -lt 5 ]]; then
-            echo "内核版本 < 5.x，使用 GCC 9 编译..."
-            echo "CC=gcc-9" >> $GITHUB_ENV
-            echo "HOSTCC=gcc-9" >> $GITHUB_ENV
-          elif [[ "$KERNEL_MAJOR" -eq 5 && "$KERNEL_MINOR" -lt 10 ]]; then
-            echo "内核版本 5.0-5.9，使用 GCC 10 编译..."
-            echo "CC=gcc-10" >> $GITHUB_ENV
-            echo "HOSTCC=gcc-10" >> $GITHUB_ENV
-          else
-            echo "内核版本 >= 5.10，使用默认 GCC..."
-          fi
-          # 为旧内核设置 PIE 修复标志
-          if [[ "$KERNEL_MAJOR" -lt 5 ]]; then
-            echo "KCFLAGS=-fno-pie -no-pie" >> $GITHUB_ENV
-            echo "HOSTCFLAGS=-fno-pie -no-pie" >> $GITHUB_ENV
-            echo "CFLAGS_MODULE=-fno-pie -no-pie" >> $GITHUB_ENV
-          fi
-
-      # ---------- 内核配置与编译 ----------
+      # ---------- 内核配置 ----------
       - name: 生成主线默认配置
         run: |
           cd $KERNEL_SRC
@@ -236,6 +222,7 @@ jobs:
           CONFIG_USB_SERIAL_CH341=y
           CONFIG_USB_SERIAL_CH343=m
           EOF
+            # 下载 CH343 驱动源码
             if [ ! -f drivers/usb/serial/ch343.c ]; then
               wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败"
               wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败"
@@ -418,7 +405,6 @@ jobs:
             mv .config.tmp .config
           fi
 
-          # 更新配置
           if make help | grep -q olddefconfig; then
             make olddefconfig
           else
@@ -426,7 +412,6 @@ jobs:
             yes "" | make oldconfig
           fi
 
-          # 使用 scripts/config 强制启用关键选项
           if [ -f scripts/config ]; then
             echo "使用 scripts/config 强制启用关键选项..."
             if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
@@ -458,10 +443,12 @@ jobs:
             fi
           fi
 
-      - name: 预编译 scripts 工具
+      - name: 预编译 scripts 和头文件（为 USB/IP 工具准备）
         run: |
           cd $KERNEL_SRC
           make scripts
+          make prepare
+          make headers_install
 
       - name: 显示关键配置状态 (验证)
         run: |
@@ -469,17 +456,7 @@ jobs:
           echo "=== 已启用的配置项 (部分) ==="
           grep -E "CONFIG_USB_GADGET|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS" .config || true
 
-      - name: 编译内核 (生成二进制 deb 包)
-        run: |
-          cd $KERNEL_SRC
-          if make help | grep -q "bindeb-pkg"; then
-            echo "使用 bindeb-pkg 构建"
-            make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION}
-          else
-            echo "使用 deb-pkg 构建"
-            make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
-          fi
-
+      # ---------- 编译 USB/IP 工具（提前进行，确保产物）----------
       - name: 编译 USB/IP 用户空间工具 (如果启用)
         if: github.event.inputs.feature_usbip == 'true'
         run: |
@@ -494,10 +471,7 @@ jobs:
           make install DESTDIR=/tmp/usbip-tools
           # 确保动态库被复制
           find /tmp/usbip-tools -name "*.so*" -exec cp -P {} /tmp/usbip-tools/usr/local/lib/ \; 2>/dev/null || true
-          echo "=== 打包内容 ==="
-          ls -la /tmp/usbip-tools/usr/local/bin/
-          ls -la /tmp/usbip-tools/usr/local/lib/
-          # 创建安装脚本
+          find /tmp/usbip-tools -name "*.so*" -exec echo "库文件: {}" \;
           cat > /tmp/usbip-tools/install.sh << 'EOF'
           #!/bin/bash
           echo "安装 USB/IP 工具..."
@@ -508,6 +482,21 @@ jobs:
           echo "USB/IP 工具安装完成！"
           EOF
           chmod +x /tmp/usbip-tools/install.sh
+          echo "=== USB/IP 工具编译完成 ==="
+          ls -la /tmp/usbip-tools/usr/local/bin/
+          ls -la /tmp/usbip-tools/usr/local/lib/
+
+      # ---------- 编译内核 ----------
+      - name: 编译内核 (生成二进制 deb 包)
+        run: |
+          cd $KERNEL_SRC
+          if make help | grep -q "bindeb-pkg"; then
+            echo "使用 bindeb-pkg 构建"
+            make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION}
+          else
+            echo "使用 deb-pkg 构建"
+            make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
+          fi
 
       - name: 收集构建产物 (分离 deb、内核模块、usbip)
         run: |
@@ -566,25 +555,25 @@ jobs:
           - usbip-tools-*.tar.gz : USB/IP 用户空间工具（如启用）
           EOF
 
-      - name: 上传构建产物到临时 Artifact
+      - name: 上传产物 (临时存储)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: artifacts/
-          retention-days: 7
+          retention-days: 30
 
   release:
     runs-on: ubuntu-24.04
     needs: build
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     steps:
-      - name: 下载 Artifact
+      - name: 下载产物
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: release-files/
 
-      - name: 列出待发布文件
+      - name: 列出下载的文件
         run: |
           echo "=== release-files 目录内容 ==="
           ls -la release-files/
