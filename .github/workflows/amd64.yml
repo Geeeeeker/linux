@@ -1021,3 +1021,10 @@ jobs:
             sudo ./install.sh
 
             sudo reboot
+          files: |
+            release-files/*.deb
+            release-files/*-modules.zip
+            release-files/usbip-tools-*.tar.gz
+            release-files/RELEASE_INFO.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
