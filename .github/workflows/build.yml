@@ -155,7 +155,6 @@ jobs:
         run: |
           cd $KERNEL_SRC
           cat > custom-features.cfg << 'EOF'
-          # 基础系统配置（始终包含）
           CONFIG_SYSVIPC=y
           CONFIG_SYSVIPC_SYSCTL=y
           CONFIG_SYSVIPC_COMPAT=y
@@ -173,7 +172,6 @@ jobs:
           CONFIG_MODULE_UNLOAD=y
           CONFIG_IKCONFIG=y
           CONFIG_IKCONFIG_PROC=y
-          # Apache 符号支持 (完整)
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
           EOF
@@ -207,8 +205,8 @@ jobs:
           EOF
             # 下载 CH343 驱动源码
             if [ ! -f drivers/usb/serial/ch343.c ]; then
-              wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败，继续编译"
-              wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败，继续编译"
+              wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败"
+              wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败"
             fi
             if ! grep -q "config USB_SERIAL_CH343" drivers/usb/serial/Kconfig; then
               echo "" >> drivers/usb/serial/Kconfig
@@ -228,7 +226,6 @@ jobs:
           CONFIG_USBIP_VHCI_HCD=y
           CONFIG_USBIP_HOST=y
           CONFIG_USBIP_VHCI_HC_PORTS=8
-          CONFIG_USBIP_DEBUG=n
           EOF
           fi
 
@@ -376,21 +373,31 @@ jobs:
           EOF
           fi
 
-      - name: 应用自定义配置 (合并并强制使能关键项)
+      - name: 应用自定义配置 (兼容所有内核版本)
         run: |
           cd $KERNEL_SRC
           if [ -f scripts/kconfig/merge_config.sh ]; then
             echo "使用 merge_config.sh 合并配置..."
             scripts/kconfig/merge_config.sh -m .config custom-features.cfg
           else
-            echo "merge_config.sh 不存在，手动追加配置..."
-            cat custom-features.cfg >> .config
+            echo "merge_config.sh 不存在，使用手动安全追加..."
+            # 去除已存在的重复项，避免交互提示
+            grep -v -F -f <(cut -d= -f1 custom-features.cfg) .config > .config.tmp 2>/dev/null || cp .config .config.tmp
+            cat custom-features.cfg >> .config.tmp
+            mv .config.tmp .config
           fi
-          make olddefconfig || make oldconfig
 
-          # 使用 scripts/config 强制启用可能被依赖关闭的选项
+          # 确定正确的更新目标
+          if make help | grep -q olddefconfig; then
+            make olddefconfig
+          else
+            echo "olddefconfig 不支持，使用 yes '' | make oldconfig"
+            yes "" | make oldconfig
+          fi
+
+          # 二次强制启用（如果 scripts/config 可用）
           if [ -f scripts/config ]; then
-            echo "强制启用关键配置..."
+            echo "使用 scripts/config 强制启用关键选项..."
             if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_USBIP_CORE
               ./scripts/config --enable CONFIG_USBIP_VHCI_HCD
@@ -413,9 +420,12 @@ jobs:
             if [[ "${{ github.event.inputs.feature_vhd }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_NTFS3_FS
             fi
-            make olddefconfig
-          else
-            echo "警告: scripts/config 不存在，跳过强制配置。"
+            # 再次更新
+            if make help | grep -q olddefconfig; then
+              make olddefconfig
+            else
+              yes "" | make oldconfig
+            fi
           fi
 
       - name: 预编译 scripts 工具 (避免 headers 构建权限错误)
