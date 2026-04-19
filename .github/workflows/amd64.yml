@@ -857,14 +857,11 @@ jobs:
       - name: 编译内核 (生成二进制 deb 包)
         run: |
           cd $KERNEL_SRC
-          # 修复权限问题：确保 scripts 下的可执行文件有执行权限
-          chmod +x scripts/basic/fixdep
-          chmod +x scripts/mod/modpost
-          chmod +x scripts/kconfig/conf
-          find scripts -name "*.sh" -exec chmod +x {} \;
-          # 可选：确保其他可能需要的工具也有执行权限
-          chmod +x scripts/sorttable 2>/dev/null || true
-          chmod +x scripts/asn1_compiler 2>/dev/null || true
+          # 修复权限问题：避免文件不存在报错
+          chmod +x scripts/basic/fixdep 2>/dev/null || true
+          [ -f scripts/mod/modpost ] && chmod +x scripts/mod/modpost || true
+          chmod +x scripts/kconfig/conf 2>/dev/null || true
+          find scripts -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
           export KBUILD_CFLAGS="-fno-pie"
           export KCFLAGS="-fno-pie -Wno-attributes -Wno-error"
           export KDEB_SOURCECHECK=false
