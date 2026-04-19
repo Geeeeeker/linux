@@ -92,7 +92,6 @@ env:
   ARCH: x86_64
   ARTIFACT_NAME: Kernel-Linux-${{ github.event.inputs.kernel_version || '7.0' }}-x86_64
 
-# 必须添加权限以创建 Release
 permissions:
   contents: write
 
@@ -108,7 +107,7 @@ jobs:
       - name: 检出本仓库
         uses: actions/checkout@v4
 
-      - name: 安装编译依赖
+      - name: 安装编译依赖 (包含旧版 GCC)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -117,6 +116,10 @@ jobs:
             libtool autoconf automake pkg-config libglib2.0-dev libudev-dev \
             libusb-1.0-0-dev libxml2-dev \
             debhelper libdw-dev
+
+          # 安装旧版 GCC 用于编译老内核
+          sudo apt-get install -y gcc-9 g++-9 || true
+          sudo apt-get install -y gcc-10 g++-10 || true
 
       - name: 打印编译环境信息
         run: |
@@ -144,12 +147,36 @@ jobs:
           echo "下载 Linux ${KERNEL_VERSION} 源码..."
           wget -q "https://github.com/torvalds/linux/archive/refs/tags/v${KERNEL_VERSION}.tar.gz" -O linux.tar.gz
 
-      # ---------- 解压源码，无编译缓存，每次全新构建 ----------
+      # ---------- 解压源码，无编译缓存 ----------
       - name: 解压源码并设置工作目录
         run: |
           tar -xzf linux.tar.gz
           mv linux-* linux-src
           echo "KERNEL_SRC=$(pwd)/linux-src" >> $GITHUB_ENV
+
+      # ---------- 选择合适的 GCC 版本 ----------
+      - name: 根据内核版本选择 GCC
+        id: select-gcc
+        run: |
+          KERNEL_MAJOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f1)
+          KERNEL_MINOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f2)
+          if [[ "$KERNEL_MAJOR" -lt 5 ]]; then
+            echo "内核版本 < 5.x，使用 GCC 9 编译..."
+            echo "CC=gcc-9" >> $GITHUB_ENV
+            echo "HOSTCC=gcc-9" >> $GITHUB_ENV
+          elif [[ "$KERNEL_MAJOR" -eq 5 && "$KERNEL_MINOR" -lt 10 ]]; then
+            echo "内核版本 5.0-5.9，使用 GCC 10 编译..."
+            echo "CC=gcc-10" >> $GITHUB_ENV
+            echo "HOSTCC=gcc-10" >> $GITHUB_ENV
+          else
+            echo "内核版本 >= 5.10，使用默认 GCC..."
+          fi
+          # 为旧内核设置 PIE 修复标志
+          if [[ "$KERNEL_MAJOR" -lt 5 ]]; then
+            echo "KCFLAGS=-fno-pie -no-pie" >> $GITHUB_ENV
+            echo "HOSTCFLAGS=-fno-pie -no-pie" >> $GITHUB_ENV
+            echo "CFLAGS_MODULE=-fno-pie -no-pie" >> $GITHUB_ENV
+          fi
 
       # ---------- 内核配置与编译 ----------
       - name: 生成主线默认配置
@@ -209,7 +236,6 @@ jobs:
           CONFIG_USB_SERIAL_CH341=y
           CONFIG_USB_SERIAL_CH343=m
           EOF
-            # 下载 CH343 驱动源码
             if [ ! -f drivers/usb/serial/ch343.c ]; then
               wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败"
               wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败"
@@ -392,7 +418,7 @@ jobs:
             mv .config.tmp .config
           fi
 
-          # 确定正确的更新目标
+          # 更新配置
           if make help | grep -q olddefconfig; then
             make olddefconfig
           else
@@ -400,7 +426,7 @@ jobs:
             yes "" | make oldconfig
           fi
 
-          # 二次强制启用（如果 scripts/config 可用）
+          # 使用 scripts/config 强制启用关键选项
           if [ -f scripts/config ]; then
             echo "使用 scripts/config 强制启用关键选项..."
             if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
@@ -425,25 +451,11 @@ jobs:
             if [[ "${{ github.event.inputs.feature_vhd }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_NTFS3_FS
             fi
-            # 再次更新
             if make help | grep -q olddefconfig; then
               make olddefconfig
             else
               yes "" | make oldconfig
             fi
-          fi
-
-      - name: 修复旧内核 GCC PIC 编译错误
-        run: |
-          KERNEL_MAJOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f1)
-          if [[ "$KERNEL_MAJOR" -lt 5 ]]; then
-            echo "检测到旧版内核 (${{ env.KERNEL_VERSION }})，应用 PIE 修复标志（分开传递）..."
-            # 将标志分开传递，避免旧版 GCC 无法识别
-            echo "KCFLAGS=-fno-pie -no-pie" >> $GITHUB_ENV
-            echo "HOSTCFLAGS=-fno-pie -no-pie" >> $GITHUB_ENV
-            echo "CFLAGS_MODULE=-fno-pie -no-pie" >> $GITHUB_ENV
-          else
-            echo "内核版本 >= 5.0，无需特殊修复。"
           fi
 
       - name: 预编译 scripts 工具
@@ -480,9 +492,12 @@ jobs:
           mkdir -p /tmp/usbip-tools/usr/local/lib
           mkdir -p /tmp/usbip-tools/usr/local/sbin
           make install DESTDIR=/tmp/usbip-tools
-          # 显式复制所有动态库
+          # 确保动态库被复制
           find /tmp/usbip-tools -name "*.so*" -exec cp -P {} /tmp/usbip-tools/usr/local/lib/ \; 2>/dev/null || true
-          find /tmp/usbip-tools -name "*.so*" -exec echo "库文件: {}" \;
+          echo "=== 打包内容 ==="
+          ls -la /tmp/usbip-tools/usr/local/bin/
+          ls -la /tmp/usbip-tools/usr/local/lib/
+          # 创建安装脚本
           cat > /tmp/usbip-tools/install.sh << 'EOF'
           #!/bin/bash
           echo "安装 USB/IP 工具..."
@@ -493,9 +508,6 @@ jobs:
           echo "USB/IP 工具安装完成！"
           EOF
           chmod +x /tmp/usbip-tools/install.sh
-          echo "=== USB/IP 工具编译完成 ==="
-          ls -la /tmp/usbip-tools/usr/local/bin/
-          ls -la /tmp/usbip-tools/usr/local/lib/
 
       - name: 收集构建产物 (分离 deb、内核模块、usbip)
         run: |
@@ -554,7 +566,7 @@ jobs:
           - usbip-tools-*.tar.gz : USB/IP 用户空间工具（如启用）
           EOF
 
-      - name: 上传构建产物到临时 Artifact（供 Release 使用）
+      - name: 上传构建产物到临时 Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
