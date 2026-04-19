@@ -160,7 +160,7 @@ jobs:
           cd $KERNEL_SRC
           make defconfig
 
-      - name: 创建自定义内核配置片段 (完整版)
+      - name: 创建自定义内核配置片段 (完整版，含 xHCI 与 USB 3.2)
         run: |
           cd $KERNEL_SRC
           cat > custom-features.cfg << 'EOF'
@@ -183,6 +183,9 @@ jobs:
           CONFIG_IKCONFIG_PROC=y
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
+          CONFIG_USB_SUPPORT=y
+          CONFIG_PCI=y
+          CONFIG_USB_COMMON=y
           EOF
 
           if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
@@ -212,10 +215,10 @@ jobs:
           CONFIG_USB_SERIAL_CH341=y
           CONFIG_USB_SERIAL_CH343=m
           EOF
-            # 下载 CH343 驱动源码
+            # 下载 CH343 驱动源码（带重试）
             if [ ! -f drivers/usb/serial/ch343.c ]; then
-              wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败"
-              wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败"
+              wget -q --tries=3 --timeout=10 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败"
+              wget -q --tries=3 --timeout=10 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败"
             fi
             if ! grep -q "config USB_SERIAL_CH343" drivers/usb/serial/Kconfig; then
               echo "" >> drivers/usb/serial/Kconfig
@@ -387,7 +390,6 @@ jobs:
           CONFIG_USB_XHCI_HCD=y
           CONFIG_USB_XHCI_PCI=y
           CONFIG_USB_XHCI_PLATFORM=y
-          CONFIG_USB_PCI=y
           EOF
           fi
 
@@ -398,7 +400,7 @@ jobs:
           EOF
           fi
 
-      - name: 应用自定义配置 (兼容所有内核版本)
+      - name: 应用自定义配置 (修复管道错误，兼容所有内核版本)
         run: |
           cd $KERNEL_SRC
           if [ -f scripts/kconfig/merge_config.sh ]; then
@@ -411,7 +413,8 @@ jobs:
             mv .config.tmp .config
           fi
 
-          if make help | grep -q olddefconfig; then
+          # 修复管道错误：将 stderr 重定向，并限制输出长度
+          if make help 2>/dev/null | head -n 50 | grep -q olddefconfig; then
             make olddefconfig
           else
             echo "olddefconfig 不支持，使用 yes '' | make oldconfig"
@@ -451,7 +454,8 @@ jobs:
             if [[ "${{ github.event.inputs.feature_usb3_2 }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_USB_SUPERSPEED
             fi
-            if make help | grep -q olddefconfig; then
+            # 二次运行 olddefconfig 确保依赖正确
+            if make help 2>/dev/null | head -n 50 | grep -q olddefconfig; then
               make olddefconfig
             else
               yes "" | make oldconfig
@@ -462,7 +466,7 @@ jobs:
         run: |
           cd $KERNEL_SRC
           echo "=== 已启用的配置项 (部分) ==="
-          grep -E "CONFIG_USB_GADGET|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS|CONFIG_USB_XHCI_HCD|CONFIG_USB_SUPERSPEED" .config || true
+          grep -E "CONFIG_USB_GADGET|CONFIG_USB_DWC3|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS|CONFIG_USB_XHCI_HCD|CONFIG_USB_SUPERSPEED" .config || true
 
       - name: 编译内核 (生成二进制 deb 包)
         run: |
