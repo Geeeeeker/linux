@@ -147,17 +147,6 @@ jobs:
           mv linux-* linux-src
           echo "KERNEL_SRC=$(pwd)/linux-src" >> $GITHUB_ENV
 
-      - name: 集成 CH343P 驱动源码
-        if: github.event.inputs.feature_usb_serial == 'true'
-        run: |
-          cd $KERNEL_SRC
-          if [ ! -f drivers/usb/serial/ch343.c ]; then
-            wget -q https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c
-          fi
-          if [ ! -f drivers/usb/serial/ch343.h ]; then
-            wget -q https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h
-          fi
-
       - name: 生成主线默认配置
         run: |
           cd $KERNEL_SRC
@@ -215,6 +204,11 @@ jobs:
           CONFIG_USB_SERIAL_CH341=y
           CONFIG_USB_SERIAL_CH343=m
           EOF
+            # 下载 CH343 驱动源码
+            if [ ! -f drivers/usb/serial/ch343.c ]; then
+              wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败"
+              wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败"
+            fi
             if ! grep -q "config USB_SERIAL_CH343" drivers/usb/serial/Kconfig; then
               echo "" >> drivers/usb/serial/Kconfig
               echo "config USB_SERIAL_CH343" >> drivers/usb/serial/Kconfig
@@ -279,18 +273,6 @@ jobs:
           if [[ "${{ github.event.inputs.feature_uvc_zstd }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_VIDEO_CLASS=y
-          CONFIG_MEDIA_SUPPORT=y
-          CONFIG_MEDIA_CAMERA_SUPPORT=y
-          CONFIG_MEDIA_CONTROLLER=y
-          CONFIG_VIDEO_DEV=y
-          CONFIG_VIDEO_V4L2=y
-          CONFIG_VIDEOBUF2_CORE=y
-          CONFIG_VIDEOBUF2_V4L2=y
-          CONFIG_VIDEOBUF2_MEMOPS=y
-          CONFIG_VIDEOBUF2_VMALLOC=y
-          CONFIG_VIDEOBUF2_DMA_SG=y
-          CONFIG_V4L_PLATFORM_DRIVERS=y
-          CONFIG_V4L_MEM2MEM_DRIVERS=y
           CONFIG_ZSTD_COMPRESS=y
           CONFIG_ZSTD_DECOMPRESS=y
           EOF
@@ -346,6 +328,18 @@ jobs:
           CONFIG_HID_APPLE=y
           CONFIG_KEYBOARD_APPLESPI=y
           CONFIG_SENSORS_APPLESMC=y
+          CONFIG_MEDIA_SUPPORT=y
+          CONFIG_MEDIA_CAMERA_SUPPORT=y
+          CONFIG_MEDIA_CONTROLLER=y
+          CONFIG_VIDEO_DEV=y
+          CONFIG_VIDEO_V4L2=y
+          CONFIG_VIDEOBUF2_CORE=y
+          CONFIG_VIDEOBUF2_V4L2=y
+          CONFIG_VIDEOBUF2_MEMOPS=y
+          CONFIG_VIDEOBUF2_VMALLOC=y
+          CONFIG_VIDEOBUF2_DMA_SG=y
+          CONFIG_V4L_PLATFORM_DRIVERS=y
+          CONFIG_V4L_MEM2MEM_DRIVERS=y
           EOF
           fi
 
@@ -400,7 +394,6 @@ jobs:
             yes "" | make oldconfig
           fi
 
-          # 二次强制启用关键项
           if [ -f scripts/config ]; then
             echo "使用 scripts/config 强制启用关键选项..."
             if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
@@ -411,15 +404,6 @@ jobs:
             if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_USB_GADGET
               ./scripts/config --enable CONFIG_USB_CONFIGFS
-              ./scripts/config --enable CONFIG_USB_DWC3_HOST
-              ./scripts/config --enable CONFIG_USB_DWC3_GADGET
-            fi
-            if [[ "${{ github.event.inputs.feature_uvc_zstd }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_VIDEO_CLASS
-              ./scripts/config --enable CONFIG_ZSTD_COMPRESS
-            fi
-            if [[ "${{ github.event.inputs.feature_apple }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_KEYBOARD_APPLESPI
             fi
             if [[ "${{ github.event.inputs.feature_kvm_vfio }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_KVM
@@ -445,14 +429,14 @@ jobs:
         run: |
           cd $KERNEL_SRC
           echo "=== 已启用的配置项 (部分) ==="
-          grep -E "CONFIG_USB_GADGET|CONFIG_USB_DWC3|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_USB_VIDEO_CLASS|CONFIG_KEYBOARD_APPLESPI|CONFIG_ZSTD_COMPRESS|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS" .config || true
+          grep -E "CONFIG_USB_GADGET|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS" .config || true
 
-      - name: 编译内核 (生成二进制 deb 包，修复 4.4 源码包检查)
+      - name: 编译内核 (生成二进制 deb 包)
         run: |
           cd $KERNEL_SRC
-          # 兼容旧内核的属性警告
-          export KCFLAGS="-Wno-attributes -Wno-error"
-          # 修复 4.4 内核 git 源码包检查错误
+          # 修复旧内核（如 4.4）PIC 错误和源码包检查
+          export KBUILD_CFLAGS="-fno-pie"
+          export KCFLAGS="-fno-pie -Wno-attributes -Wno-error"
           export KDEB_SOURCECHECK=false
           if make help | grep -q "bindeb-pkg"; then
             echo "使用 bindeb-pkg 构建"
@@ -474,7 +458,9 @@ jobs:
           mkdir -p /tmp/usbip-tools/usr/local/lib
           mkdir -p /tmp/usbip-tools/usr/local/sbin
           make install DESTDIR=/tmp/usbip-tools
+          # 显式复制所有动态库
           find /tmp/usbip-tools -name "*.so*" -exec cp -P {} /tmp/usbip-tools/usr/local/lib/ \; 2>/dev/null || true
+          find /tmp/usbip-tools -name "*.so*" -exec echo "库文件: {}" \;
           cat > /tmp/usbip-tools/install.sh << 'EOF'
           #!/bin/bash
           echo "安装 USB/IP 工具..."
@@ -485,9 +471,10 @@ jobs:
           echo "USB/IP 工具安装完成！"
           EOF
           chmod +x /tmp/usbip-tools/install.sh
-          echo "=== USB/IP 工具编译完成 ==="
-          ls -la /tmp/usbip-tools/usr/local/bin/
-          ls -la /tmp/usbip-tools/usr/local/lib/
+          cd /tmp
+          tar -czf usbip-tools-linux-${KERNEL_VERSION}.tar.gz usbip-tools/
+          echo "=== USB/IP 工具打包完成 ==="
+          ls -la /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz
 
       - name: 收集构建产物 (分离 deb、内核模块、usbip)
         run: |
@@ -506,13 +493,11 @@ jobs:
           echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
 
           # 3. USB/IP 工具打包
-          if [ -d /tmp/usbip-tools ] && [ -n "$(ls -A /tmp/usbip-tools/usr/local/bin 2>/dev/null)" ]; then
-            cd /tmp
-            tar -czf usbip-tools-linux-${KERNEL_VERSION}.tar.gz usbip-tools/
-            cp usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
-            echo "USB/IP 工具已打包"
+          if [ -f /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz ]; then
+            cp /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
+            echo "USB/IP 工具已复制到 artifacts"
           else
-            echo "警告: USB/IP 工具目录为空，跳过打包。"
+            echo "警告: USB/IP 工具包未找到，跳过"
           fi
 
           # 4. 生成说明文件
