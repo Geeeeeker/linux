@@ -122,6 +122,8 @@ jobs:
           free -h
           echo "系统:"
           lsb_release -a 2>/dev/null || cat /etc/os-release
+          echo "GCC 版本:"
+          gcc --version
 
       # ---------- 缓存：Linux 源码压缩包 ----------
       - name: 缓存 Linux 源码压缩包
@@ -381,7 +383,6 @@ jobs:
             scripts/kconfig/merge_config.sh -m .config custom-features.cfg
           else
             echo "merge_config.sh 不存在，使用手动安全追加..."
-            # 去除已存在的重复项，避免交互提示
             grep -v -F -f <(cut -d= -f1 custom-features.cfg) .config > .config.tmp 2>/dev/null || cp .config .config.tmp
             cat custom-features.cfg >> .config.tmp
             mv .config.tmp .config
@@ -428,7 +429,21 @@ jobs:
             fi
           fi
 
-      - name: 预编译 scripts 工具 (避免 headers 构建权限错误)
+      - name: 修复旧内核 GCC PIC 编译错误
+        run: |
+          # 对于 4.x 及更早的内核，需要禁用 PIE 编译标志
+          KERNEL_MAJOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f1)
+          KERNEL_MINOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f2)
+          if [[ "$KERNEL_MAJOR" -lt 5 ]]; then
+            echo "检测到旧版内核 ($KERNEL_MAJOR.$KERNEL_MINOR)，应用 PIE 修复标志..."
+            echo "KCFLAGS=\"-fno-pie -no-pie\"" >> $GITHUB_ENV
+            echo "HOSTCFLAGS=\"-fno-pie -no-pie\"" >> $GITHUB_ENV
+            echo "CFLAGS_MODULE=\"-fno-pie -no-pie\"" >> $GITHUB_ENV
+          else
+            echo "内核版本 >= 5.0，无需特殊修复。"
+          fi
+
+      - name: 预编译 scripts 工具
         run: |
           cd $KERNEL_SRC
           make scripts
