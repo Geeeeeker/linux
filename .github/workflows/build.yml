@@ -466,19 +466,44 @@ jobs:
           fi
 
       - name: 编译 USB/IP 用户空间工具 (如果启用)
+        id: build_usbip
         if: github.event.inputs.feature_usbip == 'true'
         run: |
-          cd $KERNEL_SRC/tools/usb/usbip
-          echo "=== 开始编译 USB/IP 工具 ==="
-          ./autogen.sh
+          # 确保在正确目录
+          USBIP_SRC="$KERNEL_SRC/tools/usb/usbip"
+          if [ ! -d "$USBIP_SRC" ]; then
+            echo "内核源码树中未找到 USB/IP 工具源码，尝试从外部下载..."
+            mkdir -p /tmp/usbip-src
+            cd /tmp/usbip-src
+            # 从 kernel.org 下载对应版本的 Linux 源码，并提取 tools/usb/usbip
+            wget -q "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz" || \
+            wget -q "https://mirrors.edge.kernel.org/pub/linux/kernel/v${KERNEL_MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
+            tar -xf linux-${KERNEL_VERSION}.tar.xz --strip-components=3 linux-${KERNEL_VERSION}/tools/usb/usbip
+            USBIP_SRC="/tmp/usbip-src"
+          fi
+          
+          cd $USBIP_SRC
+          echo "=== 开始编译 USB/IP 工具 (源码路径: $USBIP_SRC) ==="
+          # 安装可能缺失的依赖
+          sudo apt-get install -y libtool libudev-dev libusb-1.0-0-dev
+          # 生成配置脚本
+          if [ -f autogen.sh ]; then
+            ./autogen.sh
+          fi
           ./configure --prefix=/usr/local
           make -j$(nproc)
-          mkdir -p /tmp/usbip-tools/usr/local/bin
-          mkdir -p /tmp/usbip-tools/usr/local/lib
-          mkdir -p /tmp/usbip-tools/usr/local/sbin
-          make install DESTDIR=/tmp/usbip-tools
-          find /tmp/usbip-tools -name "*.so*" -exec echo "库文件: {}" \;
-          cat > /tmp/usbip-tools/install.sh << 'EOF'
+          
+          # 安装到临时目录
+          DESTDIR=/tmp/usbip-tools
+          mkdir -p $DESTDIR
+          make install DESTDIR=$DESTDIR
+          
+          # 收集所有动态库和二进制文件
+          echo "=== 已安装的文件列表 ==="
+          find $DESTDIR -type f -exec file {} \; | grep -E "ELF|shared object"
+          
+          # 创建安装脚本
+          cat > $DESTDIR/install.sh << 'EOF'
           #!/bin/bash
           echo "安装 USB/IP 工具..."
           cp -r usr/local/bin/* /usr/local/bin/ 2>/dev/null || true
@@ -487,9 +512,12 @@ jobs:
           ldconfig
           echo "USB/IP 工具安装完成！"
           EOF
-          chmod +x /tmp/usbip-tools/install.sh
+          chmod +x $DESTDIR/install.sh
+          
+          # 设置成功标志
+          echo "usbip_built=true" >> $GITHUB_OUTPUT
           echo "=== USB/IP 工具编译完成 ==="
-          ls -la /tmp/usbip-tools/
+          ls -la $DESTDIR/
 
       - name: 收集构建产物 (分离 deb、内核模块、usbip)
         run: |
@@ -508,13 +536,18 @@ jobs:
           echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
 
           # 3. USB/IP 工具打包
-          if [ -d /tmp/usbip-tools ] && [ "$(ls -A /tmp/usbip-tools/usr/local/bin 2>/dev/null)" ]; then
+          if [ -d /tmp/usbip-tools ]; then
+            echo "检测到 USB/IP 工具临时目录，开始打包..."
             cd /tmp
             tar -czf usbip-tools-linux-${KERNEL_VERSION}.tar.gz usbip-tools/
             cp usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
-            echo "USB/IP 工具已打包"
+            echo "USB/IP 工具已打包: usbip-tools-linux-${KERNEL_VERSION}.tar.gz"
           else
-            echo "警告: USB/IP 工具目录为空，跳过打包。"
+            if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
+              echo "警告: USB/IP 功能已启用，但未找到编译产物目录 /tmp/usbip-tools，请检查编译日志。"
+            else
+              echo "USB/IP 功能未启用，跳过打包。"
+            fi
           fi
 
           # 4. 生成说明文件
