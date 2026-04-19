@@ -28,7 +28,7 @@ on:
         type: boolean
         default: true
       feature_usb_gadget:
-        description: 'USB Gadget / UDC / libcomposite'
+        description: 'USB Gadget / dwc3 / 大容量存储(UMS)'
         type: boolean
         default: true
       feature_usb_serial:
@@ -56,7 +56,7 @@ on:
         type: boolean
         default: true
       feature_btrfs:
-        description: 'Btrfs 文件系统支持 (模块)'
+        description: 'Btrfs 文件系统支持 (含 ZSTD 压缩)'
         type: boolean
         default: true
       feature_apple:
@@ -77,6 +77,10 @@ on:
         default: true
       feature_usb3_2:
         description: 'USB 3.2 SuperSpeed 支持'
+        type: boolean
+        default: true
+      feature_uvc:
+        description: 'USB Video Class 摄像头支持'
         type: boolean
         default: true
       feature_amd_platform:
@@ -266,7 +270,6 @@ jobs:
           CONFIG_PATA_NETCELL=y
           CONFIG_PATA_NINJA32=y
           CONFIG_PATA_NS87415=y
-          CONFIG_PATA_OLDPIIX=y
           CONFIG_PATA_OPTI=y
           CONFIG_PATA_PLATFORM=y
           CONFIG_PATA_RZ1000=y
@@ -289,7 +292,7 @@ jobs:
           CONFIG_DRM_I915_DEBUG_RUNTIME_PM=n
           EOF
 
-          # USB Gadget / dwc3
+          # USB Gadget / dwc3 + 大容量存储 (host 侧)
           if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_GADGET=y
@@ -307,6 +310,9 @@ jobs:
           CONFIG_USB_CONFIGFS_RNDIS=y
           CONFIG_USB_CONFIGFS_F_LB_SS=y
           CONFIG_USB_MASS_STORAGE=y
+          # 大容量存储 host 侧驱动
+          CONFIG_USB_STORAGE=y
+          CONFIG_USB_UAS=y
           EOF
           fi
 
@@ -431,11 +437,13 @@ jobs:
           EOF
           fi
 
-          # Btrfs
+          # Btrfs (含 ZSTD 压缩)
           if [[ "${{ github.event.inputs.feature_btrfs }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_BTRFS_FS=m
           CONFIG_BTRFS_FS_POSIX_ACL=y
+          CONFIG_ZSTD_COMPRESS=y
+          CONFIG_ZSTD_DECOMPRESS=y
           EOF
           fi
 
@@ -540,6 +548,22 @@ jobs:
           CONFIG_USB_SUPERSPEED=y
           CONFIG_USB_SUPERSPEED_PLUS=y
           CONFIG_USB_DEFAULT_PERSIST=y
+          EOF
+          fi
+
+          # UVC 摄像头 (独立)
+          if [[ "${{ github.event.inputs.feature_uvc }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_MEDIA_SUPPORT=y
+          CONFIG_MEDIA_CAMERA_SUPPORT=y
+          CONFIG_MEDIA_CONTROLLER=y
+          CONFIG_VIDEO_DEV=y
+          CONFIG_VIDEO_V4L2=y
+          CONFIG_USB_VIDEO_CLASS=y
+          CONFIG_VIDEOBUF2_CORE=y
+          CONFIG_VIDEOBUF2_V4L2=y
+          CONFIG_VIDEOBUF2_MEMOPS=y
+          CONFIG_VIDEOBUF2_VMALLOC=y
           EOF
           fi
 
@@ -703,22 +727,8 @@ jobs:
           EOF
           fi
 
-          # 默认开启项：UVC、ZSTD、大容量存储、打印机
+          # 打印机 (默认开启)
           cat >> custom-features.cfg << 'EOF'
-          CONFIG_MEDIA_SUPPORT=y
-          CONFIG_MEDIA_CAMERA_SUPPORT=y
-          CONFIG_MEDIA_CONTROLLER=y
-          CONFIG_VIDEO_DEV=y
-          CONFIG_VIDEO_V4L2=y
-          CONFIG_USB_VIDEO_CLASS=y
-          CONFIG_VIDEOBUF2_CORE=y
-          CONFIG_VIDEOBUF2_V4L2=y
-          CONFIG_VIDEOBUF2_MEMOPS=y
-          CONFIG_VIDEOBUF2_VMALLOC=y
-          CONFIG_ZSTD_COMPRESS=y
-          CONFIG_ZSTD_DECOMPRESS=y
-          CONFIG_USB_STORAGE=y
-          CONFIG_USB_UAS=y
           CONFIG_USB_PRINTER=y
           EOF
 
@@ -793,6 +803,7 @@ jobs:
             ./scripts/config --enable CONFIG_PCI
             if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_USB_GADGET
+              ./scripts/config --enable CONFIG_USB_STORAGE
             fi
             if [[ "${{ github.event.inputs.feature_virt }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_KVM
@@ -806,6 +817,9 @@ jobs:
             fi
             if [[ "${{ github.event.inputs.feature_usb3_2 }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_USB_SUPERSPEED
+            fi
+            if [[ "${{ github.event.inputs.feature_uvc }}" == "true" ]]; then
+              ./scripts/config --enable CONFIG_USB_VIDEO_CLASS
             fi
             if [[ "${{ github.event.inputs.gpu_support }}" == "nvidia" ]]; then
               ./scripts/config --enable CONFIG_DRM_NOUVEAU
@@ -825,9 +839,6 @@ jobs:
               ./scripts/config --enable CONFIG_AMD_IOMMU
             fi
             # 默认开启项
-            ./scripts/config --enable CONFIG_USB_VIDEO_CLASS
-            ./scripts/config --enable CONFIG_ZSTD_COMPRESS
-            ./scripts/config --enable CONFIG_USB_STORAGE
             ./scripts/config --enable CONFIG_USB_PRINTER
 
             if make help 2>/dev/null | head -n 50 | grep -q olddefconfig; then
@@ -903,6 +914,7 @@ jobs:
           GitHub 运行编号：${{ github.run_number }}
           虚拟化与 QEMU：${{ github.event.inputs.feature_virt }}
           内核增强：${{ github.event.inputs.feature_enhance }}
+          UVC 摄像头：${{ github.event.inputs.feature_uvc }}
           显卡支持：${{ github.event.inputs.gpu_support }}
           有线网卡：${{ github.event.inputs.wired_net }}
           无线与蓝牙：${{ github.event.inputs.wireless_bt }}
@@ -936,6 +948,7 @@ jobs:
             ## 📦 Linux ${{ env.KERNEL_VERSION }} 定制内核
             **虚拟化与 QEMU：** ${{ github.event.inputs.feature_virt }}
             **内核增强：** ${{ github.event.inputs.feature_enhance }}
+            **UVC 摄像头：** ${{ github.event.inputs.feature_uvc }}
             **显卡支持：** ${{ github.event.inputs.gpu_support }}
             **有线网卡：** ${{ github.event.inputs.wired_net }}
             **无线与蓝牙：** ${{ github.event.inputs.wireless_bt }}
