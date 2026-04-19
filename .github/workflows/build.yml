@@ -92,6 +92,10 @@ env:
   ARCH: x86_64
   ARTIFACT_NAME: Kernel-Linux-${{ github.event.inputs.kernel_version || '7.0' }}-x86_64
 
+# 必须添加权限以创建 Release
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -431,14 +435,13 @@ jobs:
 
       - name: 修复旧内核 GCC PIC 编译错误
         run: |
-          # 对于 4.x 及更早的内核，需要禁用 PIE 编译标志
           KERNEL_MAJOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f1)
-          KERNEL_MINOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f2)
           if [[ "$KERNEL_MAJOR" -lt 5 ]]; then
-            echo "检测到旧版内核 ($KERNEL_MAJOR.$KERNEL_MINOR)，应用 PIE 修复标志..."
-            echo "KCFLAGS=\"-fno-pie -no-pie\"" >> $GITHUB_ENV
-            echo "HOSTCFLAGS=\"-fno-pie -no-pie\"" >> $GITHUB_ENV
-            echo "CFLAGS_MODULE=\"-fno-pie -no-pie\"" >> $GITHUB_ENV
+            echo "检测到旧版内核 (${{ env.KERNEL_VERSION }})，应用 PIE 修复标志（分开传递）..."
+            # 将标志分开传递，避免旧版 GCC 无法识别
+            echo "KCFLAGS=-fno-pie -no-pie" >> $GITHUB_ENV
+            echo "HOSTCFLAGS=-fno-pie -no-pie" >> $GITHUB_ENV
+            echo "CFLAGS_MODULE=-fno-pie -no-pie" >> $GITHUB_ENV
           else
             echo "内核版本 >= 5.0，无需特殊修复。"
           fi
@@ -466,44 +469,21 @@ jobs:
           fi
 
       - name: 编译 USB/IP 用户空间工具 (如果启用)
-        id: build_usbip
         if: github.event.inputs.feature_usbip == 'true'
         run: |
-          # 确保在正确目录
-          USBIP_SRC="$KERNEL_SRC/tools/usb/usbip"
-          if [ ! -d "$USBIP_SRC" ]; then
-            echo "内核源码树中未找到 USB/IP 工具源码，尝试从外部下载..."
-            mkdir -p /tmp/usbip-src
-            cd /tmp/usbip-src
-            # 从 kernel.org 下载对应版本的 Linux 源码，并提取 tools/usb/usbip
-            wget -q "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz" || \
-            wget -q "https://mirrors.edge.kernel.org/pub/linux/kernel/v${KERNEL_MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
-            tar -xf linux-${KERNEL_VERSION}.tar.xz --strip-components=3 linux-${KERNEL_VERSION}/tools/usb/usbip
-            USBIP_SRC="/tmp/usbip-src"
-          fi
-          
-          cd $USBIP_SRC
-          echo "=== 开始编译 USB/IP 工具 (源码路径: $USBIP_SRC) ==="
-          # 安装可能缺失的依赖
-          sudo apt-get install -y libtool libudev-dev libusb-1.0-0-dev
-          # 生成配置脚本
-          if [ -f autogen.sh ]; then
-            ./autogen.sh
-          fi
+          cd $KERNEL_SRC/tools/usb/usbip
+          echo "=== 开始编译 USB/IP 工具 ==="
+          ./autogen.sh
           ./configure --prefix=/usr/local
           make -j$(nproc)
-          
-          # 安装到临时目录
-          DESTDIR=/tmp/usbip-tools
-          mkdir -p $DESTDIR
-          make install DESTDIR=$DESTDIR
-          
-          # 收集所有动态库和二进制文件
-          echo "=== 已安装的文件列表 ==="
-          find $DESTDIR -type f -exec file {} \; | grep -E "ELF|shared object"
-          
-          # 创建安装脚本
-          cat > $DESTDIR/install.sh << 'EOF'
+          mkdir -p /tmp/usbip-tools/usr/local/bin
+          mkdir -p /tmp/usbip-tools/usr/local/lib
+          mkdir -p /tmp/usbip-tools/usr/local/sbin
+          make install DESTDIR=/tmp/usbip-tools
+          # 显式复制所有动态库
+          find /tmp/usbip-tools -name "*.so*" -exec cp -P {} /tmp/usbip-tools/usr/local/lib/ \; 2>/dev/null || true
+          find /tmp/usbip-tools -name "*.so*" -exec echo "库文件: {}" \;
+          cat > /tmp/usbip-tools/install.sh << 'EOF'
           #!/bin/bash
           echo "安装 USB/IP 工具..."
           cp -r usr/local/bin/* /usr/local/bin/ 2>/dev/null || true
@@ -512,12 +492,10 @@ jobs:
           ldconfig
           echo "USB/IP 工具安装完成！"
           EOF
-          chmod +x $DESTDIR/install.sh
-          
-          # 设置成功标志
-          echo "usbip_built=true" >> $GITHUB_OUTPUT
+          chmod +x /tmp/usbip-tools/install.sh
           echo "=== USB/IP 工具编译完成 ==="
-          ls -la $DESTDIR/
+          ls -la /tmp/usbip-tools/usr/local/bin/
+          ls -la /tmp/usbip-tools/usr/local/lib/
 
       - name: 收集构建产物 (分离 deb、内核模块、usbip)
         run: |
@@ -536,18 +514,13 @@ jobs:
           echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
 
           # 3. USB/IP 工具打包
-          if [ -d /tmp/usbip-tools ]; then
-            echo "检测到 USB/IP 工具临时目录，开始打包..."
+          if [ -d /tmp/usbip-tools ] && [ -n "$(ls -A /tmp/usbip-tools/usr/local/bin 2>/dev/null)" ]; then
             cd /tmp
             tar -czf usbip-tools-linux-${KERNEL_VERSION}.tar.gz usbip-tools/
             cp usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
-            echo "USB/IP 工具已打包: usbip-tools-linux-${KERNEL_VERSION}.tar.gz"
+            echo "USB/IP 工具已打包"
           else
-            if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
-              echo "警告: USB/IP 功能已启用，但未找到编译产物目录 /tmp/usbip-tools，请检查编译日志。"
-            else
-              echo "USB/IP 功能未启用，跳过打包。"
-            fi
+            echo "警告: USB/IP 工具目录为空，跳过打包。"
           fi
 
           # 4. 生成说明文件
@@ -581,25 +554,25 @@ jobs:
           - usbip-tools-*.tar.gz : USB/IP 用户空间工具（如启用）
           EOF
 
-      - name: 上传产物 (临时存储)
+      - name: 上传构建产物到临时 Artifact（供 Release 使用）
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: artifacts/
-          retention-days: 30
+          retention-days: 7
 
   release:
     runs-on: ubuntu-24.04
     needs: build
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     steps:
-      - name: 下载产物
+      - name: 下载 Artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: release-files/
 
-      - name: 列出下载的文件
+      - name: 列出待发布文件
         run: |
           echo "=== release-files 目录内容 ==="
           ls -la release-files/
