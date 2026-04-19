@@ -857,14 +857,20 @@ jobs:
       - name: 编译内核 (生成二进制 deb 包)
         run: |
           cd $KERNEL_SRC
-          # 修复权限问题：避免文件不存在报错
-          chmod +x scripts/basic/fixdep 2>/dev/null || true
-          [ -f scripts/mod/modpost ] && chmod +x scripts/mod/modpost || true
-          chmod +x scripts/kconfig/conf 2>/dev/null || true
-          find scripts -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+
+          # 修复旧内核（如 4.4）PIC 错误和源码包检查
           export KBUILD_CFLAGS="-fno-pie"
           export KCFLAGS="-fno-pie -Wno-attributes -Wno-error"
           export KDEB_SOURCECHECK=false
+
+          # 修复权限问题：确保 scripts 下的可执行文件有执行权限
+          chmod +x scripts/basic/fixdep
+          chmod +x scripts/kconfig/conf
+          chmod +x scripts/mod/modpost 2>/dev/null || true
+          chmod +x scripts/sorttable 2>/dev/null || true
+          chmod +x scripts/asn1_compiler 2>/dev/null || true
+          find scripts -name "*.sh" -exec chmod +x {} \;
+
           if make help | grep -q "bindeb-pkg"; then
             echo "使用 bindeb-pkg 构建"
             make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION}
