@@ -20,9 +20,6 @@ on:
           - '5.10'
           - '5.4'
           - '4.19'
-          - '4.14'
-          - '4.9'
-          - '4.4'
       feature_base:
         description: '基础系统配置 (含 Intel/AMD 平台与固态驱动)'
         type: boolean
@@ -141,15 +138,56 @@ jobs:
       - name: 检出本仓库
         uses: actions/checkout@v4
 
-      - name: 安装编译依赖
+      - name: 安装编译基础依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential libncurses-dev bison flex libssl-dev libelf-dev \
             bc dwarves rsync cpio wget xz-utils git fakeroot dpkg-dev \
             libtool autoconf automake pkg-config libglib2.0-dev libudev-dev \
-            libusb-1.0-0-dev libxml2-dev \
-            debhelper libdw-dev
+            libusb-1.0-0-dev libxml2-dev debhelper libdw-dev
+
+      - name: 根据内核版本选择合适的 GCC
+        run: |
+          KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
+          echo "当前内核版本: ${KERNEL_VERSION}"
+          
+          # 版本映射函数
+          select_gcc() {
+            if [[ "$1" < "5.4" ]]; then
+              echo "8"        # 4.19 → GCC 8
+            elif [[ "$1" < "5.10" ]]; then
+              echo "9"        # 5.4 → GCC 9
+            elif [[ "$1" < "6.1" ]]; then
+              echo "10"       # 5.10, 5.15 → GCC 10
+            elif [[ "$1" < "6.12" ]]; then
+              echo "12"       # 6.1, 6.6 → GCC 12
+            else
+              echo "13"       # 6.12, 7.0 → GCC 13
+            fi
+          }
+          
+          GCC_VER=$(select_gcc "${KERNEL_VERSION}")
+          echo "选择 GCC-${GCC_VER}"
+          
+          # 安装对应 GCC 版本（若需要）
+          if [[ "${GCC_VER}" != "13" ]]; then
+            sudo apt-get install -y gcc-${GCC_VER} g++-${GCC_VER} || {
+              echo "::warning::无法直接安装 gcc-${GCC_VER}，尝试添加 ubuntu-toolchain-r/test PPA"
+              sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+              sudo apt-get update
+              sudo apt-get install -y gcc-${GCC_VER} g++-${GCC_VER}
+            }
+          fi
+          
+          # 设置编译器优先级
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${GCC_VER} 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${GCC_VER} 100
+          
+          # 显示当前使用的编译器版本
+          echo "=== GCC 版本信息 ==="
+          gcc --version
+          g++ --version
 
       - name: 打印编译环境信息
         run: |
@@ -159,8 +197,6 @@ jobs:
           free -h
           echo "系统:"
           lsb_release -a 2>/dev/null || cat /etc/os-release
-          echo "GCC 版本:"
-          gcc --version
 
       - name: 缓存 Linux 源码压缩包
         id: cache-src-tarball
@@ -245,15 +281,12 @@ jobs:
           CONFIG_NVME_HWMON=y
           CONFIG_NVME_TCP=y
           CONFIG_NVME_TARGET=y
-          CONFIG_BLK_DEV_SD=y
           CONFIG_SCSI=y
           CONFIG_BLK_DEV_SR=y
           CONFIG_CHR_DEV_SG=y
           CONFIG_SCSI_MQ_DEFAULT=y
           CONFIG_SCSI_VIRTIO=y
           CONFIG_ATA_VERBOSE_ERROR=y
-          CONFIG_SATA_AHCI=y
-          CONFIG_SATA_MOBILE_LPM_POLICY=0
           CONFIG_SATA_AHCI_PLATFORM=y
           CONFIG_AHCI_CEVA=y
           CONFIG_AHCI_QORIQ=y
@@ -310,7 +343,6 @@ jobs:
           CONFIG_USB_CONFIGFS_RNDIS=y
           CONFIG_USB_CONFIGFS_F_LB_SS=y
           CONFIG_USB_MASS_STORAGE=y
-          # 大容量存储 host 侧驱动
           CONFIG_USB_STORAGE=y
           CONFIG_USB_UAS=y
           EOF
@@ -392,7 +424,7 @@ jobs:
           EOF
           fi
 
-          # 虚拟化与 QEMU (合并原 KVM+VFIO+QEMU)
+          # 虚拟化与 QEMU
           if [[ "${{ github.event.inputs.feature_virt }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_KVM=y
@@ -437,7 +469,7 @@ jobs:
           EOF
           fi
 
-          # Btrfs (含 ZSTD 压缩)
+          # Btrfs
           if [[ "${{ github.event.inputs.feature_btrfs }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_BTRFS_FS=m
@@ -447,7 +479,7 @@ jobs:
           EOF
           fi
 
-          # RTL8XXXU (默认开启，不再作为输入)
+          # RTL8XXXU 默认开启
           cat >> custom-features.cfg << 'EOF'
           CONFIG_RTL8XXXU=m
           CONFIG_RTL8XXXU_UNTESTED=y
@@ -514,7 +546,7 @@ jobs:
           EOF
           fi
 
-          # 内核增强 (合并 KernelSU + Android 容器 + 符号表)
+          # 内核增强
           if [[ "${{ github.event.inputs.feature_enhance }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_KPROBES=y
@@ -551,7 +583,7 @@ jobs:
           EOF
           fi
 
-          # UVC 摄像头 (独立)
+          # UVC 摄像头
           if [[ "${{ github.event.inputs.feature_uvc }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_MEDIA_SUPPORT=y
@@ -764,7 +796,6 @@ jobs:
           CONFIG_USB_SERIAL_QUALCOMM=y
           CONFIG_WWAN=y
           CONFIG_USB_ACM=y
-          CONFIG_USB_SERIAL=y
           CONFIG_USB_SERIAL_FTDI_SIO=y
           CONFIG_USB_SERIAL_CP210X=y
           CONFIG_USB_PTP=y
@@ -790,62 +821,10 @@ jobs:
             cat custom-features.cfg >> .config.tmp
             mv .config.tmp .config
           fi
-
           if make help 2>/dev/null | head -n 50 | grep -q olddefconfig; then
             make olddefconfig
           else
             yes "" | make oldconfig
-          fi
-
-          if [ -f scripts/config ]; then
-            echo "使用 scripts/config 强制启用关键选项..."
-            ./scripts/config --enable CONFIG_USB_SUPPORT
-            ./scripts/config --enable CONFIG_PCI
-            if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_GADGET
-              ./scripts/config --enable CONFIG_USB_STORAGE
-            fi
-            if [[ "${{ github.event.inputs.feature_virt }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_KVM
-              ./scripts/config --enable CONFIG_KVM_INTEL
-            fi
-            if [[ "${{ github.event.inputs.feature_docker }}" == "true" ]]; then
-              ./scripts/config --module CONFIG_OVERLAY_FS
-            fi
-            if [[ "${{ github.event.inputs.feature_xhci }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_XHCI_HCD
-            fi
-            if [[ "${{ github.event.inputs.feature_usb3_2 }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_SUPERSPEED
-            fi
-            if [[ "${{ github.event.inputs.feature_uvc }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_VIDEO_CLASS
-            fi
-            if [[ "${{ github.event.inputs.gpu_support }}" == "nvidia" ]]; then
-              ./scripts/config --enable CONFIG_DRM_NOUVEAU
-            elif [[ "${{ github.event.inputs.gpu_support }}" == "amd" ]]; then
-              ./scripts/config --enable CONFIG_DRM_AMDGPU
-            fi
-            if [[ "${{ github.event.inputs.wired_net }}" == "intel" || "${{ github.event.inputs.wired_net }}" == "both" ]]; then
-              ./scripts/config --enable CONFIG_E1000E
-            fi
-            if [[ "${{ github.event.inputs.wired_net }}" == "realtek" || "${{ github.event.inputs.wired_net }}" == "both" ]]; then
-              ./scripts/config --enable CONFIG_R8169
-            fi
-            if [[ "${{ github.event.inputs.wireless_bt }}" != "none" ]]; then
-              ./scripts/config --enable CONFIG_BT
-            fi
-            if [[ "${{ github.event.inputs.feature_amd_platform }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_AMD_IOMMU
-            fi
-            # 默认开启项
-            ./scripts/config --enable CONFIG_USB_PRINTER
-
-            if make help 2>/dev/null | head -n 50 | grep -q olddefconfig; then
-              make olddefconfig
-            else
-              yes "" | make oldconfig
-            fi
           fi
 
       - name: 显示关键配置状态
@@ -854,24 +833,24 @@ jobs:
           echo "=== 已启用的配置项 (部分) ==="
           grep -E "CONFIG_USB_VIDEO_CLASS|CONFIG_ZSTD_COMPRESS|CONFIG_USB_STORAGE|CONFIG_USB_PRINTER|CONFIG_DRM_NOUVEAU|CONFIG_DRM_AMDGPU|CONFIG_E1000E|CONFIG_R8169|CONFIG_IWLWIFI|CONFIG_BRCMFMAC|CONFIG_BT|CONFIG_AMD_IOMMU|CONFIG_KVM|CONFIG_VIRTIO" .config || true
 
-      - name: 编译内核 (彻底修复权限问题)
+      - name: 编译内核
         run: |
           cd $KERNEL_SRC
-
           export KBUILD_CFLAGS="-fno-pie"
           export KCFLAGS="-fno-pie -Wno-attributes -Wno-error"
+          # 旧版内核追加警告抑制
+          if [[ "${{ env.KERNEL_VERSION }}" < "5.10" ]]; then
+            echo "→ 旧版内核，追加 -Wno-pointer-sign -Wno-attribute-alias"
+            export KCFLAGS="$KCFLAGS -Wno-pointer-sign -Wno-attribute-alias"
+          fi
           export KDEB_SOURCECHECK=false
-
-          # 彻底修复 scripts/ 下所有文件权限
+          
+          # 修复脚本权限
           find scripts -type f -name "*.sh" -exec chmod +x {} \;
           find scripts -type f -executable -exec chmod +x {} \; 2>/dev/null || true
-          chmod +x scripts/basic/fixdep
-          chmod +x scripts/kconfig/conf
-          chmod +x scripts/mod/modpost 2>/dev/null || true
-          chmod +x scripts/sorttable 2>/dev/null || true
-          chmod +x scripts/asn1_compiler 2>/dev/null || true
-          chmod +x scripts/unifdef 2>/dev/null || true
-
+          chmod +x scripts/basic/fixdep scripts/kconfig/conf scripts/mod/modpost 2>/dev/null || true
+          chmod +x scripts/sorttable scripts/asn1_compiler scripts/unifdef 2>/dev/null || true
+          
           if make help | grep -q "bindeb-pkg"; then
             echo "使用 bindeb-pkg 构建"
             make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION}
@@ -951,80 +930,64 @@ jobs:
           name: ${{ env.ARTIFACT_NAME }}
           path: release-files/
 
-      - name: 列出待发布文件 (调试)
+      - name: 列出待发布文件
         run: |
           echo "=== release-files 目录内容 ==="
           ls -la release-files/
-          echo "=== 检查 deb 包 ==="
-          ls release-files/*.deb || echo "未找到 deb 包"
-          echo "=== 检查 modules.zip ==="
-          ls release-files/*-modules.zip || echo "未找到 modules.zip"
-          echo "=== 检查 usbip 工具包 ==="
-          ls release-files/usbip-tools-*.tar.gz || echo "未找到 usbip 工具包"
+
+      - name: 生成 Release Body
+        id: body
+        run: |
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "## 📦 Linux ${{ env.KERNEL_VERSION }} 定制内核" >> $GITHUB_OUTPUT
+          echo "**构建时间：** $(date)" >> $GITHUB_OUTPUT
+          echo "**GitHub 运行编号：** ${{ github.run_number }}" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "### 🔧 用户选择的功能" >> $GITHUB_OUTPUT
+          echo "- 基础系统配置: ${{ github.event.inputs.feature_base }}" >> $GITHUB_OUTPUT
+          echo "- USB Gadget / dwc3: ${{ github.event.inputs.feature_usb_gadget }}" >> $GITHUB_OUTPUT
+          echo "- USB 转串口 (CH34x): ${{ github.event.inputs.feature_usb_serial }}" >> $GITHUB_OUTPUT
+          echo "- USB/IP 支持: ${{ github.event.inputs.feature_usbip }}" >> $GITHUB_OUTPUT
+          echo "- LXC 容器: ${{ github.event.inputs.feature_lxc }}" >> $GITHUB_OUTPUT
+          echo "- VHD 启动: ${{ github.event.inputs.feature_vhd }}" >> $GITHUB_OUTPUT
+          echo "- 虚拟化与 QEMU: ${{ github.event.inputs.feature_virt }}" >> $GITHUB_OUTPUT
+          echo "- Docker / Podman: ${{ github.event.inputs.feature_docker }}" >> $GITHUB_OUTPUT
+          echo "- Btrfs 文件系统: ${{ github.event.inputs.feature_btrfs }}" >> $GITHUB_OUTPUT
+          echo "- Apple Mac 驱动: ${{ github.event.inputs.feature_apple }}" >> $GITHUB_OUTPUT
+          echo "- 音频支持: ${{ github.event.inputs.feature_audio }}" >> $GITHUB_OUTPUT
+          echo "- 内核增强: ${{ github.event.inputs.feature_enhance }}" >> $GITHUB_OUTPUT
+          echo "- xHCI 主控: ${{ github.event.inputs.feature_xhci }}" >> $GITHUB_OUTPUT
+          echo "- USB 3.2 SuperSpeed: ${{ github.event.inputs.feature_usb3_2 }}" >> $GITHUB_OUTPUT
+          echo "- UVC 摄像头: ${{ github.event.inputs.feature_uvc }}" >> $GITHUB_OUTPUT
+          echo "- AMD 平台驱动: ${{ github.event.inputs.feature_amd_platform }}" >> $GITHUB_OUTPUT
+          echo "- 显卡支持: ${{ github.event.inputs.gpu_support }}" >> $GITHUB_OUTPUT
+          echo "- 有线网卡: ${{ github.event.inputs.wired_net }}" >> $GITHUB_OUTPUT
+          echo "- 无线/蓝牙: ${{ github.event.inputs.wireless_bt }}" >> $GITHUB_OUTPUT
+          echo "- 扩展外设集: ${{ github.event.inputs.extra_peripherals }}" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "### ✅ 默认开启的功能" >> $GITHUB_OUTPUT
+          echo "- RTL8XXXU 无线网卡驱动 (模块)" >> $GITHUB_OUTPUT
+          echo "- USB 打印机支持" >> $GITHUB_OUTPUT
+          echo "- Intel 锐炬独显基础支持" >> $GITHUB_OUTPUT
+          echo "- 常见固态硬盘优化 (NVMe/SATA)" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "### 🚀 快速安装" >> $GITHUB_OUTPUT
+          echo "\`\`\`bash" >> $GITHUB_OUTPUT
+          echo "sudo dpkg -i linux-image-*.deb linux-headers-*.deb linux-libc-dev*.deb" >> $GITHUB_OUTPUT
+          echo "unzip Kernel-Linux-*-modules.zip -d /lib/modules/" >> $GITHUB_OUTPUT
+          echo "tar -xzf usbip-tools-linux-*.tar.gz && cd usbip-tools/ && sudo ./install.sh" >> $GITHUB_OUTPUT
+          echo "sudo reboot" >> $GITHUB_OUTPUT
+          echo "\`\`\`" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.KERNEL_VERSION }}-${{ github.run_number }}
           name: Linux ${{ env.KERNEL_VERSION }} 定制内核
-          body: |
-            ## 📦 Linux ${{ env.KERNEL_VERSION }} 定制内核
-
-            **构建时间：** $(date)
-            **GitHub 运行编号：** ${{ github.run_number }}
-
-            ### 🔧 用户选择的功能
-            - 基础系统配置 (含 Intel/AMD 平台与固态驱动): ${{ github.event.inputs.feature_base }}
-            - USB Gadget / dwc3 / 大容量存储(UMS): ${{ github.event.inputs.feature_usb_gadget }}
-            - USB 转串口 (CH340/CH341, CH343P): ${{ github.event.inputs.feature_usb_serial }}
-            - USB/IP 支持: ${{ github.event.inputs.feature_usbip }}
-            - LXC 容器完整支持: ${{ github.event.inputs.feature_lxc }}
-            - VHD 启动支持 (loop + NTFS3): ${{ github.event.inputs.feature_vhd }}
-            - 虚拟化与 QEMU 支持 (KVM / VFIO / Virtio / 9p): ${{ github.event.inputs.feature_virt }}
-            - Docker / Podman 完整支持: ${{ github.event.inputs.feature_docker }}
-            - Btrfs 文件系统支持 (含 ZSTD 压缩): ${{ github.event.inputs.feature_btrfs }}
-            - Apple Mac 设备驱动: ${{ github.event.inputs.feature_apple }}
-            - 音频支持 (Intel HDA / 杜比 / HDMI / ALSA): ${{ github.event.inputs.feature_audio }}
-            - 内核增强 (KernelSU / Kprobes / Android 容器 / 符号表): ${{ github.event.inputs.feature_enhance }}
-            - xHCI 主机控制器支持 (USB 3.x 主控): ${{ github.event.inputs.feature_xhci }}
-            - USB 3.2 SuperSpeed 支持: ${{ github.event.inputs.feature_usb3_2 }}
-            - UVC 摄像头支持: ${{ github.event.inputs.feature_uvc }}
-            - AMD 主板平台驱动: ${{ github.event.inputs.feature_amd_platform }}
-            - 显卡支持: ${{ github.event.inputs.gpu_support }}
-            - 有线网卡支持: ${{ github.event.inputs.wired_net }}
-            - 无线网卡与蓝牙支持: ${{ github.event.inputs.wireless_bt }}
-            - 扩展外设集 (指纹/红外/触摸屏/传感器/GPS/4G/相机/杂项USB): ${{ github.event.inputs.extra_peripherals }}
-
-            ### ✅ 默认开启的功能
-            - RTL8XXXU 无线网卡驱动 (模块)
-            - USB 打印机支持
-            - Intel 锐炬独显基础支持
-            - 常见固态硬盘优化 (NVMe/SATA)
-
-            ### 📁 产物说明
-            - **.deb 文件**：内核镜像、头文件、C 库开发包
-            - **Kernel-Linux-版本-x86_64-modules.zip**：所有内核模块文件（.ko）
-            - **usbip-tools-linux-版本.tar.gz**：USB/IP 用户空间工具（如启用）
-            - **RELEASE_INFO.txt**：构建详细信息
-
-            ### 🚀 快速安装
-            ```bash
-            # 安装内核
-            sudo dpkg -i linux-image-*.deb linux-headers-*.deb linux-libc-dev*.deb
-
-            # （可选）提取内核模块
-            unzip Kernel-Linux-*-modules.zip -d /lib/modules/
-
-            # （可选）安装 USB/IP 工具
-            tar -xzf usbip-tools-linux-*.tar.gz
-            cd usbip-tools/
-            sudo ./install.sh
-
-            sudo reboot
+          body: ${{ steps.body.outputs.body }}
           files: |
             release-files/*.deb
             release-files/*-modules.zip
             release-files/usbip-tools-*.tar.gz
             release-files/RELEASE_INFO.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
