@@ -460,7 +460,8 @@ jobs:
           cd $KERNEL_SRC/tools/usb/usbip
           echo "=== 开始编译 USB/IP 工具 ==="
           ./autogen.sh
-          ./configure --prefix=/usr/local
+          # 禁用将警告视为错误，避免因格式截断警告导致编译失败
+          CFLAGS="-Wno-error" ./configure --prefix=/usr/local
           make -j$(nproc)
           mkdir -p /tmp/usbip-tools/usr/local/bin
           mkdir -p /tmp/usbip-tools/usr/local/lib
