@@ -854,24 +854,23 @@ jobs:
           echo "=== 已启用的配置项 (部分) ==="
           grep -E "CONFIG_USB_VIDEO_CLASS|CONFIG_ZSTD_COMPRESS|CONFIG_USB_STORAGE|CONFIG_USB_PRINTER|CONFIG_DRM_NOUVEAU|CONFIG_DRM_AMDGPU|CONFIG_E1000E|CONFIG_R8169|CONFIG_IWLWIFI|CONFIG_BRCMFMAC|CONFIG_BT|CONFIG_AMD_IOMMU|CONFIG_KVM|CONFIG_VIRTIO" .config || true
 
-      - name: 编译内核 (生成二进制 deb 包)
+      - name: 编译内核 (彻底修复权限问题)
         run: |
           cd $KERNEL_SRC
 
-          # 修复旧内核（如 4.4）PIC 错误和源码包检查
           export KBUILD_CFLAGS="-fno-pie"
           export KCFLAGS="-fno-pie -Wno-attributes -Wno-error"
           export KDEB_SOURCECHECK=false
 
-          # 先构建必要的内部工具，并修复权限
-          make -j$(nproc) scripts_basic
-          make -j$(nproc) scripts
+          # 彻底修复 scripts/ 下所有文件权限
+          find scripts -type f -name "*.sh" -exec chmod +x {} \;
+          find scripts -type f -executable -exec chmod +x {} \; 2>/dev/null || true
           chmod +x scripts/basic/fixdep
           chmod +x scripts/kconfig/conf
           chmod +x scripts/mod/modpost 2>/dev/null || true
           chmod +x scripts/sorttable 2>/dev/null || true
           chmod +x scripts/asn1_compiler 2>/dev/null || true
-          find scripts -name "*.sh" -exec chmod +x {} \;
+          chmod +x scripts/unifdef 2>/dev/null || true
 
           if make help | grep -q "bindeb-pkg"; then
             echo "使用 bindeb-pkg 构建"
@@ -951,6 +950,17 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: release-files/
+
+      - name: 列出待发布文件 (调试)
+        run: |
+          echo "=== release-files 目录内容 ==="
+          ls -la release-files/
+          echo "=== 检查 deb 包 ==="
+          ls release-files/*.deb || echo "未找到 deb 包"
+          echo "=== 检查 modules.zip ==="
+          ls release-files/*-modules.zip || echo "未找到 modules.zip"
+          echo "=== 检查 usbip 工具包 ==="
+          ls release-files/usbip-tools-*.tar.gz || echo "未找到 usbip 工具包"
 
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
