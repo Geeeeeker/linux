@@ -91,6 +91,10 @@ on:
         description: 'USB 3.2 SuperSpeed 支持'
         type: boolean
         default: true
+      feature_qemu:
+        description: 'QEMU 虚拟化支持 (Virtio, 9p, GPU)'
+        type: boolean
+        default: true
 
 env:
   KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '7.0' }}
@@ -160,7 +164,7 @@ jobs:
           cd $KERNEL_SRC
           make defconfig
 
-      - name: 创建自定义内核配置片段 (完整版，含 xHCI 与 USB 3.2)
+      - name: 创建自定义内核配置片段 (含 xHCI / USB 3.2 / QEMU)
         run: |
           cd $KERNEL_SRC
           cat > custom-features.cfg << 'EOF'
@@ -215,7 +219,7 @@ jobs:
           CONFIG_USB_SERIAL_CH341=y
           CONFIG_USB_SERIAL_CH343=m
           EOF
-            # 下载 CH343 驱动源码（带重试）
+            # 下载 CH343 驱动源码
             if [ ! -f drivers/usb/serial/ch343.c ]; then
               wget -q --tries=3 --timeout=10 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败"
               wget -q --tries=3 --timeout=10 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败"
@@ -396,7 +400,29 @@ jobs:
           if [[ "${{ github.event.inputs.feature_usb3_2 }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_SUPERSPEED=y
+          CONFIG_USB_SUPERSPEED_PLUS=y
           CONFIG_USB_DEFAULT_PERSIST=y
+          EOF
+          fi
+
+          if [[ "${{ github.event.inputs.feature_qemu }}" == "true" ]]; then
+            cat >> custom-features.cfg << 'EOF'
+          CONFIG_VIRTIO_PCI=y
+          CONFIG_VIRTIO_BALLOON=y
+          CONFIG_VIRTIO_BLK=y
+          CONFIG_VIRTIO_NET=y
+          CONFIG_VIRTIO_CONSOLE=y
+          CONFIG_VIRTIO_FS=y
+          CONFIG_VIRTIO_GPU=y
+          CONFIG_VIRTIO_INPUT=y
+          CONFIG_VIRTIO_MMIO=y
+          CONFIG_VIRTIO_PMEM=y
+          CONFIG_NET_9P=y
+          CONFIG_NET_9P_VIRTIO=y
+          CONFIG_9P_FS=y
+          CONFIG_9P_FS_POSIX_ACL=y
+          CONFIG_9P_FS_SECURITY=y
+          CONFIG_SCSI_VIRTIO=y
           EOF
           fi
 
@@ -453,6 +479,13 @@ jobs:
             fi
             if [[ "${{ github.event.inputs.feature_usb3_2 }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_USB_SUPERSPEED
+              ./scripts/config --enable CONFIG_USB_SUPERSPEED_PLUS
+            fi
+            if [[ "${{ github.event.inputs.feature_qemu }}" == "true" ]]; then
+              ./scripts/config --enable CONFIG_VIRTIO_PCI
+              ./scripts/config --enable CONFIG_VIRTIO_BLK
+              ./scripts/config --enable CONFIG_VIRTIO_NET
+              ./scripts/config --enable CONFIG_9P_FS
             fi
             # 二次运行 olddefconfig 确保依赖正确
             if make help 2>/dev/null | head -n 50 | grep -q olddefconfig; then
@@ -466,7 +499,7 @@ jobs:
         run: |
           cd $KERNEL_SRC
           echo "=== 已启用的配置项 (部分) ==="
-          grep -E "CONFIG_USB_GADGET|CONFIG_USB_DWC3|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS|CONFIG_USB_XHCI_HCD|CONFIG_USB_SUPERSPEED" .config || true
+          grep -E "CONFIG_USB_GADGET|CONFIG_USB_DWC3|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS|CONFIG_USB_XHCI_HCD|CONFIG_USB_SUPERSPEED|CONFIG_VIRTIO|CONFIG_9P_FS" .config || true
 
       - name: 编译内核 (生成二进制 deb 包)
         run: |
@@ -562,6 +595,7 @@ jobs:
           - KernelSU 基础: ${{ github.event.inputs.feature_ksu }}
           - xHCI 主机控制器: ${{ github.event.inputs.feature_xhci }}
           - USB 3.2 SuperSpeed: ${{ github.event.inputs.feature_usb3_2 }}
+          - QEMU 虚拟化支持: ${{ github.event.inputs.feature_qemu }}
           - Apache 符号支持: CONFIG_KALLSYMS=y, CONFIG_KALLSYMS_ALL=y
 
           产物文件：
@@ -620,6 +654,7 @@ jobs:
             - KernelSU 基础: ${{ github.event.inputs.feature_ksu }}
             - xHCI 主机控制器: ${{ github.event.inputs.feature_xhci }}
             - USB 3.2 SuperSpeed: ${{ github.event.inputs.feature_usb3_2 }}
+            - QEMU 虚拟化支持: ${{ github.event.inputs.feature_qemu }}
             - **Apache 符号支持**: CONFIG_KALLSYMS=y + CONFIG_KALLSYMS_ALL=y (完整)
 
             ### 📁 产物说明
