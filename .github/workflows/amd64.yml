@@ -24,7 +24,7 @@ on:
           - '4.9'
           - '4.4'
       feature_base:
-        description: '基础系统配置 (含 Intel 平台驱动)'
+        description: '基础系统配置 (含 Intel/AMD 平台与固态驱动)'
         type: boolean
         default: true
       feature_usb_gadget:
@@ -47,8 +47,8 @@ on:
         description: 'VHD 启动支持 (loop + NTFS3)'
         type: boolean
         default: true
-      feature_kvm_vfio:
-        description: 'KVM + VFIO + Intel GVT-g 直通'
+      feature_virt:
+        description: '虚拟化与 QEMU 支持 (KVM / VFIO / Virtio / 9p)'
         type: boolean
         default: true
       feature_docker:
@@ -59,10 +59,6 @@ on:
         description: 'Btrfs 文件系统支持 (模块)'
         type: boolean
         default: true
-      feature_rtl8xxxu:
-        description: 'RTL8XXXU 无线网卡支持 (模块)'
-        type: boolean
-        default: true
       feature_apple:
         description: 'Apple Mac 设备驱动'
         type: boolean
@@ -71,12 +67,8 @@ on:
         description: '音频支持 (Intel HDA / 杜比 / HDMI / ALSA)'
         type: boolean
         default: true
-      feature_android:
-        description: 'Android 容器支持 (Binder/Ashmem/ION)'
-        type: boolean
-        default: true
-      feature_ksu:
-        description: 'KernelSU 基础支持 (Kprobes)'
+      feature_enhance:
+        description: '内核增强 (KernelSU / Kprobes / Android 容器 / 符号表)'
         type: boolean
         default: true
       feature_xhci:
@@ -87,97 +79,41 @@ on:
         description: 'USB 3.2 SuperSpeed 支持'
         type: boolean
         default: true
-      feature_qemu:
-        description: 'QEMU 虚拟化支持 (Virtio, 9p, GPU)'
-        type: boolean
-        default: true
-      feature_nvidia_gpu:
-        description: 'NVIDIA 显卡支持 (Nouveau 开源驱动)'
-        type: boolean
-        default: false
-      feature_amd_gpu:
-        description: 'AMD 显卡支持 (amdgpu)'
-        type: boolean
-        default: false
-      feature_intel_eth:
-        description: 'Intel 有线网卡 (e1000e, igb)'
-        type: boolean
-        default: true
-      feature_realtek_eth:
-        description: 'Realtek 有线网卡 (r8169)'
-        type: boolean
-        default: true
-      feature_intel_wifi:
-        description: 'Intel 无线网卡 (iwlwifi)'
-        type: boolean
-        default: false
-      feature_broadcom_wifi:
-        description: 'Broadcom 无线网卡 (b43, brcmfmac)'
-        type: boolean
-        default: false
-      feature_bluetooth:
-        description: '蓝牙支持 (BT, BTHID, RFCOMM)'
-        type: boolean
-        default: false
       feature_amd_platform:
         description: 'AMD 主板平台驱动 (USB, RAID, SATA, NVMe, 声卡等)'
         type: boolean
         default: false
-      # ----- 新拆分/新增选项 -----
-      feature_uvc:
-        description: 'USB Video Class 摄像头支持'
-        type: boolean
-        default: true
-      feature_zstd:
-        description: 'ZSTD 压缩/解压缩支持'
-        type: boolean
-        default: true
-      feature_usb_mass_storage:
-        description: 'USB 大容量存储(UMS)'
-        type: boolean
-        default: true
-      feature_fingerprint:
-        description: '指纹识别驱动'
-        type: boolean
-        default: false
-      feature_ir:
-        description: '红外线设备支持 (IrDA, RC 核心)'
-        type: boolean
-        default: false
-      feature_facecam:
-        description: '人脸识别专用摄像头驱动'
-        type: boolean
-        default: false
-      feature_touchscreen:
-        description: '触摸屏驱动 (USB / I2C / HID)'
-        type: boolean
-        default: false
-      feature_sensors:
-        description: '重力感应 / 加速度计 / 环境光 / 接近传感器'
-        type: boolean
-        default: false
-      feature_gps:
-        description: 'GPS / 北斗导航接收器'
-        type: boolean
-        default: false
-      feature_mobile_wwan:
-        description: '3G/4G/5G 移动通信模块 (CDC MBIM/QMI/NCM/ECM)'
-        type: boolean
-        default: false
-      feature_modem:
-        description: '调制解调器 / 传真机支持'
-        type: boolean
-        default: false
-      feature_printer:
-        description: '打印机 / 扫描仪支持 (USB Printer Class)'
-        type: boolean
-        default: false
-      feature_digital_cam:
-        description: '数码相机驱动 (佳能、尼康、索尼等 PTP/MTP)'
-        type: boolean
-        default: false
-      feature_misc_usb:
-        description: '其他 USB 设备 (电视卡、收音机、网络摄像头等)'
+      gpu_support:
+        description: '显卡支持'
+        required: true
+        type: choice
+        default: 'none'
+        options:
+          - 'none'
+          - 'nvidia'
+          - 'amd'
+      wired_net:
+        description: '有线网卡支持'
+        required: true
+        type: choice
+        default: 'both'
+        options:
+          - 'none'
+          - 'intel'
+          - 'realtek'
+          - 'both'
+      wireless_bt:
+        description: '无线网卡与蓝牙支持'
+        required: true
+        type: choice
+        default: 'none'
+        options:
+          - 'none'
+          - 'intel'
+          - 'broadcom'
+          - 'both'
+      extra_peripherals:
+        description: '扩展外设集 (指纹/红外/触摸屏/传感器/GPS/4G/相机/杂项USB)'
         type: boolean
         default: false
 
@@ -222,7 +158,6 @@ jobs:
           echo "GCC 版本:"
           gcc --version
 
-      # ---------- 缓存 Linux 源码压缩包 ----------
       - name: 缓存 Linux 源码压缩包
         id: cache-src-tarball
         uses: actions/cache@v4
@@ -237,7 +172,6 @@ jobs:
           echo "下载 Linux ${KERNEL_VERSION} 源码..."
           wget -q "https://github.com/torvalds/linux/archive/refs/tags/v${KERNEL_VERSION}.tar.gz" -O linux.tar.gz
 
-      # ---------- 解压源码 ----------
       - name: 解压源码并设置工作目录
         run: |
           tar -xzf linux.tar.gz
@@ -249,11 +183,11 @@ jobs:
           cd $KERNEL_SRC
           make defconfig
 
-      - name: 创建自定义内核配置片段 (完整扩展版)
+      - name: 创建自定义内核配置片段 (整合版)
         run: |
           cd $KERNEL_SRC
           cat > custom-features.cfg << 'EOF'
-          # 基础系统配置（含 Intel 平台 RAID/SATA/NVMe/电源管理）
+          # 基础系统配置（含 Intel/AMD 平台 RAID/SATA/NVMe/电源管理/固态优化）
           CONFIG_SYSVIPC=y
           CONFIG_SYSVIPC_SYSCTL=y
           CONFIG_SYSVIPC_COMPAT=y
@@ -303,6 +237,56 @@ jobs:
           CONFIG_PINCTRL=y
           CONFIG_PINCTRL_INTEL=y
           CONFIG_WATCHDOG=y
+          # 常见固态硬盘优化与驱动
+          CONFIG_NVME_HWMON=y
+          CONFIG_NVME_TCP=y
+          CONFIG_NVME_TARGET=y
+          CONFIG_BLK_DEV_SD=y
+          CONFIG_SCSI=y
+          CONFIG_BLK_DEV_SR=y
+          CONFIG_CHR_DEV_SG=y
+          CONFIG_SCSI_MQ_DEFAULT=y
+          CONFIG_SCSI_VIRTIO=y
+          CONFIG_ATA_VERBOSE_ERROR=y
+          CONFIG_SATA_AHCI=y
+          CONFIG_SATA_MOBILE_LPM_POLICY=0
+          CONFIG_SATA_AHCI_PLATFORM=y
+          CONFIG_AHCI_CEVA=y
+          CONFIG_AHCI_QORIQ=y
+          CONFIG_SATA_INIC162X=y
+          CONFIG_SATA_ACARD_AHCI=y
+          CONFIG_SATA_SIL24=y
+          CONFIG_PATA_AMD=y
+          CONFIG_PATA_MPIIX=y
+          CONFIG_PATA_OLDPIIX=y
+          CONFIG_PATA_SCH=y
+          CONFIG_PATA_IT821X=y
+          CONFIG_PATA_JMICRON=y
+          CONFIG_PATA_MARVELL=y
+          CONFIG_PATA_NETCELL=y
+          CONFIG_PATA_NINJA32=y
+          CONFIG_PATA_NS87415=y
+          CONFIG_PATA_OLDPIIX=y
+          CONFIG_PATA_OPTI=y
+          CONFIG_PATA_PLATFORM=y
+          CONFIG_PATA_RZ1000=y
+          CONFIG_PATA_SERVERWORKS=y
+          CONFIG_PATA_SIL680=y
+          CONFIG_PATA_SIS=y
+          CONFIG_PATA_TOSHIBA=y
+          CONFIG_PATA_TRIFLEX=y
+          CONFIG_PATA_VIA=y
+          CONFIG_PATA_WINBOND=y
+          # 锐炬独显支持 (i915 已默认，补充特定固件)
+          CONFIG_DRM_I915=y
+          CONFIG_DRM_I915_FORCE_PROBE="*"
+          CONFIG_DRM_I915_CAPTURE_ERROR=y
+          CONFIG_DRM_I915_COMPRESS_ERROR=y
+          CONFIG_DRM_I915_USERPTR=y
+          CONFIG_DRM_I915_GVT=y
+          CONFIG_DRM_I915_GVT_KVMGT=y
+          CONFIG_DRM_I915_PXP=y
+          CONFIG_DRM_I915_DEBUG_RUNTIME_PM=n
           EOF
 
           # USB Gadget / dwc3
@@ -402,8 +386,8 @@ jobs:
           EOF
           fi
 
-          # KVM + VFIO
-          if [[ "${{ github.event.inputs.feature_kvm_vfio }}" == "true" ]]; then
+          # 虚拟化与 QEMU (合并原 KVM+VFIO+QEMU)
+          if [[ "${{ github.event.inputs.feature_virt }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_KVM=y
           CONFIG_KVM_INTEL=y
@@ -413,6 +397,22 @@ jobs:
           CONFIG_VFIO_MDEV=y
           CONFIG_DRM_I915_GVT=y
           CONFIG_DRM_I915_GVT_KVMGT=y
+          CONFIG_VIRTIO_PCI=y
+          CONFIG_VIRTIO_BALLOON=y
+          CONFIG_VIRTIO_BLK=y
+          CONFIG_VIRTIO_NET=y
+          CONFIG_VIRTIO_CONSOLE=y
+          CONFIG_VIRTIO_FS=y
+          CONFIG_VIRTIO_GPU=y
+          CONFIG_VIRTIO_INPUT=y
+          CONFIG_VIRTIO_MMIO=y
+          CONFIG_VIRTIO_PMEM=y
+          CONFIG_NET_9P=y
+          CONFIG_NET_9P_VIRTIO=y
+          CONFIG_9P_FS=y
+          CONFIG_9P_FS_POSIX_ACL=y
+          CONFIG_9P_FS_SECURITY=y
+          CONFIG_SCSI_VIRTIO=y
           EOF
           fi
 
@@ -439,13 +439,11 @@ jobs:
           EOF
           fi
 
-          # RTL8XXXU
-          if [[ "${{ github.event.inputs.feature_rtl8xxxu }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
+          # RTL8XXXU (默认开启，不再作为输入)
+          cat >> custom-features.cfg << 'EOF'
           CONFIG_RTL8XXXU=m
           CONFIG_RTL8XXXU_UNTESTED=y
           EOF
-          fi
 
           # Apple 驱动
           if [[ "${{ github.event.inputs.feature_apple }}" == "true" ]]; then
@@ -472,7 +470,7 @@ jobs:
           EOF
           fi
 
-          # 音频支持 (含原杜比、HDMI、ALSA)
+          # 音频支持
           if [[ "${{ github.event.inputs.feature_audio }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_SOUND=y
@@ -508,9 +506,13 @@ jobs:
           EOF
           fi
 
-          # Android 容器
-          if [[ "${{ github.event.inputs.feature_android }}" == "true" ]]; then
+          # 内核增强 (合并 KernelSU + Android 容器 + 符号表)
+          if [[ "${{ github.event.inputs.feature_enhance }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
+          CONFIG_KPROBES=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_DEBUG_FS=y
           CONFIG_STAGING=y
           CONFIG_ASHMEM=y
           CONFIG_ANDROID=y
@@ -518,16 +520,8 @@ jobs:
           CONFIG_ANDROID_BINDERFS=y
           CONFIG_ION=y
           CONFIG_ION_SYSTEM_HEAP=y
-          EOF
-          fi
-
-          # KernelSU (Kprobes)
-          if [[ "${{ github.event.inputs.feature_ksu }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
-          CONFIG_KPROBES=y
-          CONFIG_HAVE_KPROBES=y
-          CONFIG_KPROBE_EVENTS=y
-          CONFIG_DEBUG_FS=y
+          CONFIG_KALLSYMS=y
+          CONFIG_KALLSYMS_ALL=y
           EOF
           fi
 
@@ -540,7 +534,7 @@ jobs:
           EOF
           fi
 
-          # USB 3.2 SuperSpeed
+          # USB 3.2
           if [[ "${{ github.event.inputs.feature_usb3_2 }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_SUPERSPEED=y
@@ -549,40 +543,15 @@ jobs:
           EOF
           fi
 
-          # QEMU 虚拟化
-          if [[ "${{ github.event.inputs.feature_qemu }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
-          CONFIG_VIRTIO_PCI=y
-          CONFIG_VIRTIO_BALLOON=y
-          CONFIG_VIRTIO_BLK=y
-          CONFIG_VIRTIO_NET=y
-          CONFIG_VIRTIO_CONSOLE=y
-          CONFIG_VIRTIO_FS=y
-          CONFIG_VIRTIO_GPU=y
-          CONFIG_VIRTIO_INPUT=y
-          CONFIG_VIRTIO_MMIO=y
-          CONFIG_VIRTIO_PMEM=y
-          CONFIG_NET_9P=y
-          CONFIG_NET_9P_VIRTIO=y
-          CONFIG_9P_FS=y
-          CONFIG_9P_FS_POSIX_ACL=y
-          CONFIG_9P_FS_SECURITY=y
-          CONFIG_SCSI_VIRTIO=y
-          EOF
-          fi
-
-          # NVIDIA 显卡 (Nouveau)
-          if [[ "${{ github.event.inputs.feature_nvidia_gpu }}" == "true" ]]; then
+          # 显卡支持
+          if [[ "${{ github.event.inputs.gpu_support }}" == "nvidia" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_DRM_NOUVEAU=y
           CONFIG_NOUVEAU_DEBUG=0
           CONFIG_NOUVEAU_DEBUG_DEFAULT=0
           CONFIG_DRM_NOUVEAU_BACKLIGHT=y
           EOF
-          fi
-
-          # AMD 显卡 (amdgpu)
-          if [[ "${{ github.event.inputs.feature_amd_gpu }}" == "true" ]]; then
+          elif [[ "${{ github.event.inputs.gpu_support }}" == "amd" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_DRM_AMDGPU=y
           CONFIG_DRM_AMDGPU_SI=y
@@ -592,9 +561,10 @@ jobs:
           EOF
           fi
 
-          # Intel 有线网卡
-          if [[ "${{ github.event.inputs.feature_intel_eth }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
+          # 有线网卡
+          case "${{ github.event.inputs.wired_net }}" in
+            intel)
+              cat >> custom-features.cfg << 'EOF'
           CONFIG_E1000=y
           CONFIG_E1000E=y
           CONFIG_IGB=y
@@ -605,30 +575,52 @@ jobs:
           CONFIG_I40E=y
           CONFIG_ICE=y
           EOF
-          fi
-
-          # Realtek 有线网卡
-          if [[ "${{ github.event.inputs.feature_realtek_eth }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
+              ;;
+            realtek)
+              cat >> custom-features.cfg << 'EOF'
           CONFIG_R8169=y
           EOF
-          fi
+              ;;
+            both)
+              cat >> custom-features.cfg << 'EOF'
+          CONFIG_E1000=y
+          CONFIG_E1000E=y
+          CONFIG_IGB=y
+          CONFIG_IGBVF=y
+          CONFIG_IXGB=y
+          CONFIG_IXGBE=y
+          CONFIG_IXGBEVF=y
+          CONFIG_I40E=y
+          CONFIG_ICE=y
+          CONFIG_R8169=y
+          EOF
+              ;;
+          esac
 
-          # Intel 无线网卡
-          if [[ "${{ github.event.inputs.feature_intel_wifi }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
+          # 无线与蓝牙
+          case "${{ github.event.inputs.wireless_bt }}" in
+            intel)
+              cat >> custom-features.cfg << 'EOF'
           CONFIG_WLAN=y
           CONFIG_WLAN_VENDOR_INTEL=y
           CONFIG_IWLWIFI=y
           CONFIG_IWLDVM=y
           CONFIG_IWLMVM=y
           CONFIG_IWLWIFI_OPMODE_MODULAR=y
+          CONFIG_BT=y
+          CONFIG_BT_RFCOMM=y
+          CONFIG_BT_RFCOMM_TTY=y
+          CONFIG_BT_BNEP=y
+          CONFIG_BT_HIDP=y
+          CONFIG_BT_LE=y
+          CONFIG_BT_INTEL=y
+          CONFIG_BT_HCIBTUSB=y
+          CONFIG_BT_HCIUART=y
+          CONFIG_BT_HCIUART_INTEL=y
           EOF
-          fi
-
-          # Broadcom 无线网卡
-          if [[ "${{ github.event.inputs.feature_broadcom_wifi }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
+              ;;
+            broadcom)
+              cat >> custom-features.cfg << 'EOF'
           CONFIG_WLAN_VENDOR_BROADCOM=y
           CONFIG_B43=y
           CONFIG_B43_PCI_AUTOSELECT=y
@@ -637,44 +629,51 @@ jobs:
           CONFIG_B43_PHY_LP=y
           CONFIG_B43_PHY_HT=y
           CONFIG_BRCMFMAC=y
-          EOF
-          fi
-
-          # 蓝牙支持
-          if [[ "${{ github.event.inputs.feature_bluetooth }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
           CONFIG_BT=y
           CONFIG_BT_RFCOMM=y
           CONFIG_BT_RFCOMM_TTY=y
           CONFIG_BT_BNEP=y
-          CONFIG_BT_BNEP_MC_FILTER=y
-          CONFIG_BT_BNEP_PROTO_FILTER=y
           CONFIG_BT_HIDP=y
-          CONFIG_BT_HS=y
           CONFIG_BT_LE=y
           CONFIG_BT_BCM=y
-          CONFIG_BT_RTL=y
-          CONFIG_BT_INTEL=y
           CONFIG_BT_HCIBTUSB=y
           CONFIG_BT_HCIUART=y
-          CONFIG_BT_HCIUART_BCSP=y
-          CONFIG_BT_HCIUART_ATH3K=y
-          CONFIG_BT_HCIUART_LL=y
+          CONFIG_BT_HCIUART_BCM=y
+          EOF
+              ;;
+            both)
+              cat >> custom-features.cfg << 'EOF'
+          CONFIG_WLAN=y
+          CONFIG_WLAN_VENDOR_INTEL=y
+          CONFIG_IWLWIFI=y
+          CONFIG_IWLDVM=y
+          CONFIG_IWLMVM=y
+          CONFIG_IWLWIFI_OPMODE_MODULAR=y
+          CONFIG_WLAN_VENDOR_BROADCOM=y
+          CONFIG_B43=y
+          CONFIG_B43_PCI_AUTOSELECT=y
+          CONFIG_B43_PCICORE_AUTOSELECT=y
+          CONFIG_B43_PHY_N=y
+          CONFIG_B43_PHY_LP=y
+          CONFIG_B43_PHY_HT=y
+          CONFIG_BRCMFMAC=y
+          CONFIG_BT=y
+          CONFIG_BT_RFCOMM=y
+          CONFIG_BT_RFCOMM_TTY=y
+          CONFIG_BT_BNEP=y
+          CONFIG_BT_HIDP=y
+          CONFIG_BT_LE=y
+          CONFIG_BT_INTEL=y
+          CONFIG_BT_BCM=y
+          CONFIG_BT_HCIBTUSB=y
+          CONFIG_BT_HCIUART=y
           CONFIG_BT_HCIUART_INTEL=y
           CONFIG_BT_HCIUART_BCM=y
-          CONFIG_BT_HCIUART_RTL=y
-          CONFIG_BT_HCIUART_QCA=y
-          CONFIG_BT_HCIUART_AG6XX=y
-          CONFIG_BT_HCIBCM203X=y
-          CONFIG_BT_HCIBPA10X=y
-          CONFIG_BT_HCIBFUSB=y
-          CONFIG_BT_HCIVHCI=y
-          CONFIG_BT_MRVL=y
-          CONFIG_BT_ATH3K=y
           EOF
-          fi
+              ;;
+          esac
 
-          # AMD 主板平台驱动
+          # AMD 平台
           if [[ "${{ github.event.inputs.feature_amd_platform }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_PCI=y
@@ -704,10 +703,8 @@ jobs:
           EOF
           fi
 
-          # ----- 新拆分/新增选项配置 -----
-          # UVC (独立)
-          if [[ "${{ github.event.inputs.feature_uvc }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
+          # 默认开启项：UVC、ZSTD、大容量存储、打印机
+          cat >> custom-features.cfg << 'EOF'
           CONFIG_MEDIA_SUPPORT=y
           CONFIG_MEDIA_CAMERA_SUPPORT=y
           CONFIG_MEDIA_CONTROLLER=y
@@ -718,230 +715,60 @@ jobs:
           CONFIG_VIDEOBUF2_V4L2=y
           CONFIG_VIDEOBUF2_MEMOPS=y
           CONFIG_VIDEOBUF2_VMALLOC=y
-          EOF
-          fi
-
-          # ZSTD (独立)
-          if [[ "${{ github.event.inputs.feature_zstd }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
           CONFIG_ZSTD_COMPRESS=y
           CONFIG_ZSTD_DECOMPRESS=y
-          EOF
-          fi
-
-          # USB 大容量存储 (host 侧)
-          if [[ "${{ github.event.inputs.feature_usb_mass_storage }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_STORAGE=y
-          CONFIG_USB_STORAGE_DEBUG=y
           CONFIG_USB_UAS=y
+          CONFIG_USB_PRINTER=y
           EOF
-          fi
 
-          # 指纹识别
-          if [[ "${{ github.event.inputs.feature_fingerprint }}" == "true" ]]; then
+          # 扩展外设集
+          if [[ "${{ github.event.inputs.extra_peripherals }}" == "true" ]]; then
             cat >> custom-features.cfg << 'EOF'
-          CONFIG_USB_F_USB2=y
-          CONFIG_HID_SENSOR_CUSTOM_SENSOR=y
           CONFIG_FINGERPRINT=y
-          EOF
-          fi
-
-          # 红外线
-          if [[ "${{ github.event.inputs.feature_ir }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
           CONFIG_IR_CORE=y
           CONFIG_IR_RC5_DECODER=y
           CONFIG_IR_RC6_DECODER=y
           CONFIG_IR_JVC_DECODER=y
           CONFIG_IR_SONY_DECODER=y
-          CONFIG_IR_SANYO_DECODER=y
-          CONFIG_IR_SHARP_DECODER=y
-          CONFIG_IR_MCE_KBD_DECODER=y
-          CONFIG_IR_XMP_DECODER=y
-          CONFIG_IR_IMON_DECODER=y
           CONFIG_RC_CORE=y
-          CONFIG_LIRC=y
           CONFIG_IRDA=y
-          EOF
-          fi
-
-          # 人脸识别专用摄像头 (通常 UVC 已覆盖，补充驱动)
-          if [[ "${{ github.event.inputs.feature_facecam }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
           CONFIG_VIDEO_OV2640=m
           CONFIG_VIDEO_OV5640=m
           CONFIG_VIDEO_OV7670=m
-          CONFIG_VIDEO_OV9650=m
-          CONFIG_VIDEO_MT9M111=m
-          EOF
-          fi
-
-          # 触摸屏
-          if [[ "${{ github.event.inputs.feature_touchscreen }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
           CONFIG_TOUCHSCREEN=y
           CONFIG_TOUCHSCREEN_USB_COMPOSITE=y
-          CONFIG_TOUCHSCREEN_USB_EGALAX=y
-          CONFIG_TOUCHSCREEN_USB_PANJIT=y
-          CONFIG_TOUCHSCREEN_USB_3M=y
-          CONFIG_TOUCHSCREEN_USB_ITM=y
-          CONFIG_TOUCHSCREEN_USB_ETURBO=y
-          CONFIG_TOUCHSCREEN_USB_GUNZE=y
-          CONFIG_TOUCHSCREEN_USB_DMC_TSC10=y
-          CONFIG_TOUCHSCREEN_USB_IRTOUCH=y
-          CONFIG_TOUCHSCREEN_USB_IDEALTEK=y
-          CONFIG_TOUCHSCREEN_USB_GENERAL_TOUCH=y
-          CONFIG_TOUCHSCREEN_USB_GOTOP=y
-          CONFIG_TOUCHSCREEN_USB_JASTEC=y
-          CONFIG_TOUCHSCREEN_USB_ELO=y
-          CONFIG_TOUCHSCREEN_USB_E2I=y
-          CONFIG_TOUCHSCREEN_USB_ZYTRONIC=y
-          CONFIG_TOUCHSCREEN_USB_ETT_TC45USB=y
-          CONFIG_TOUCHSCREEN_USB_NEXIO=y
-          CONFIG_TOUCHSCREEN_USB_EASYTOUCH=y
           CONFIG_HID_MULTITOUCH=y
-          EOF
-          fi
-
-          # 传感器 (重力感应/加速度/环境光/接近)
-          if [[ "${{ github.event.inputs.feature_sensors }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
           CONFIG_IIO=y
-          CONFIG_IIO_BUFFER=y
-          CONFIG_IIO_TRIGGER=y
           CONFIG_HID_SENSOR_ACCEL_3D=y
           CONFIG_HID_SENSOR_ALS=y
-          CONFIG_HID_SENSOR_DEVICE_ROTATION=y
           CONFIG_HID_SENSOR_GYRO_3D=y
           CONFIG_HID_SENSOR_MAGNETOMETER_3D=y
           CONFIG_HID_SENSOR_PROX=y
-          CONFIG_HID_SENSOR_HUMIDITY=y
-          CONFIG_HID_SENSOR_TEMP=y
-          CONFIG_IIO_ST_ACCEL=y
-          CONFIG_BMA180=y
-          CONFIG_MMA8452=y
-          EOF
-          fi
-
-          # GPS / 北斗
-          if [[ "${{ github.event.inputs.feature_gps }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
-          CONFIG_USB_SERIAL_NAVMAN=y
-          CONFIG_USB_SERIAL_GARMIN=y
-          CONFIG_USB_SERIAL_IPW=y
-          CONFIG_USB_SERIAL_SIERRAWIRELESS=y
           CONFIG_GNSS=y
           CONFIG_GNSS_SIRF_SERIAL=y
           CONFIG_GNSS_UBX_SERIAL=y
-          EOF
-          fi
-
-          # 移动通信 3G/4G/5G (WWAN)
-          if [[ "${{ github.event.inputs.feature_mobile_wwan }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
-          CONFIG_USB_NET_DRIVERS=y
-          CONFIG_USB_USBNET=y
-          CONFIG_USB_NET_CDCETHER=y
-          CONFIG_USB_NET_CDC_NCM=y
           CONFIG_USB_NET_CDC_MBIM=y
           CONFIG_USB_NET_QMI_WWAN=y
-          CONFIG_USB_NET_HUAWEI_CDC_NCM=y
           CONFIG_USB_SERIAL_OPTION=y
           CONFIG_USB_SERIAL_QUALCOMM=y
           CONFIG_WWAN=y
-          CONFIG_MHI_WWAN_CTRL=y
-          CONFIG_MHI_WWAN_MBIM=y
-          EOF
-          fi
-
-          # 调制解调器 / 传真机
-          if [[ "${{ github.event.inputs.feature_modem }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_ACM=y
           CONFIG_USB_SERIAL=y
-          CONFIG_USB_SERIAL_SIMPLE=y
-          CONFIG_USB_SERIAL_PL2303=y
           CONFIG_USB_SERIAL_FTDI_SIO=y
           CONFIG_USB_SERIAL_CP210X=y
-          EOF
-          fi
-
-          # 打印机 / 扫描仪
-          if [[ "${{ github.event.inputs.feature_printer }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
-          CONFIG_USB_PRINTER=y
-          CONFIG_USB_ANNOUNCE_NEW_DEVICES=y
-          EOF
-          fi
-
-          # 数码相机 (PTP/MTP / 特定品牌驱动)
-          if [[ "${{ github.event.inputs.feature_digital_cam }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
-          CONFIG_MEDIA_SUPPORT=y
-          CONFIG_MEDIA_DIGITAL_TV_SUPPORT=y
           CONFIG_USB_PTP=y
           CONFIG_USB_MDC800=y
           CONFIG_USB_MICROTEK=y
           CONFIG_USB_GSPCA=y
-          CONFIG_USB_GSPCA_CONEX=y
-          CONFIG_USB_GSPCA_ETOMS=y
-          CONFIG_USB_GSPCA_FINEPIX=y
-          CONFIG_USB_GSPCA_JEILINJ=y
-          CONFIG_USB_GSPCA_MARS=y
-          CONFIG_USB_GSPCA_MR97310A=y
-          CONFIG_USB_GSPCA_OV519=y
-          CONFIG_USB_GSPCA_OV534=y
-          CONFIG_USB_GSPCA_PAC207=y
-          CONFIG_USB_GSPCA_PAC7302=y
-          CONFIG_USB_GSPCA_SN9C20X=y
-          CONFIG_USB_GSPCA_SONIXB=y
-          CONFIG_USB_GSPCA_SONIXJ=y
-          CONFIG_USB_GSPCA_SPCA500=y
-          CONFIG_USB_GSPCA_SPCA501=y
-          CONFIG_USB_GSPCA_SPCA505=y
-          CONFIG_USB_GSPCA_SPCA506=y
-          CONFIG_USB_GSPCA_SPCA508=y
-          CONFIG_USB_GSPCA_SPCA561=y
-          CONFIG_USB_GSPCA_STK014=y
-          CONFIG_USB_GSPCA_STV0680=y
-          CONFIG_USB_GSPCA_SUNPLUS=y
-          CONFIG_USB_GSPCA_T613=y
-          CONFIG_USB_GSPCA_TV8532=y
-          CONFIG_USB_GSPCA_VC032X=y
-          CONFIG_USB_GSPCA_ZC3XX=y
-          EOF
-          fi
-
-          # 其他杂项 USB 设备
-          if [[ "${{ github.event.inputs.feature_misc_usb }}" == "true" ]]; then
-            cat >> custom-features.cfg << 'EOF'
           CONFIG_USB_EMI26=m
-          CONFIG_USB_EMI62=m
-          CONFIG_USB_APPLEDISPLAY=m
           CONFIG_USB_SISUSBVGA=m
-          CONFIG_USB_LD=m
-          CONFIG_USB_TRANCEVIBRATOR=m
           CONFIG_USB_IOWARRIOR=m
-          CONFIG_USB_TEST=m
-          CONFIG_USB_EHSET_TEST_FIXTURE=m
           CONFIG_USB_ISIGHTFW=m
-          CONFIG_USB_YUREX=m
-          CONFIG_USB_EZUSB_FX2=m
-          CONFIG_USB_HUB_USB251XB=m
-          CONFIG_USB_HSIC_USB3503=m
-          CONFIG_USB_HSIC_USB4604=m
-          CONFIG_USB_LINK_LAYER_TEST=m
-          CONFIG_USB_CHAOSKEY=m
-          CONFIG_USB_ATM=m
-          CONFIG_USB_SPEEDTOUCH=m
-          CONFIG_USB_CXACRU=m
-          CONFIG_USB_UEAGLEATM=m
-          CONFIG_USB_XUSBATM=m
           EOF
           fi
 
-      - name: 应用自定义配置 (修复管道错误，兼容所有内核版本)
+      - name: 应用自定义配置
         run: |
           cd $KERNEL_SRC
           if [ -f scripts/kconfig/merge_config.sh ]; then
@@ -957,7 +784,6 @@ jobs:
           if make help 2>/dev/null | head -n 50 | grep -q olddefconfig; then
             make olddefconfig
           else
-            echo "olddefconfig 不支持，使用 yes '' | make oldconfig"
             yes "" | make oldconfig
           fi
 
@@ -967,9 +793,8 @@ jobs:
             ./scripts/config --enable CONFIG_PCI
             if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_USB_GADGET
-              ./scripts/config --enable CONFIG_USB_CONFIGFS
             fi
-            if [[ "${{ github.event.inputs.feature_kvm_vfio }}" == "true" ]]; then
+            if [[ "${{ github.event.inputs.feature_virt }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_KVM
               ./scripts/config --enable CONFIG_KVM_INTEL
             fi
@@ -982,73 +807,28 @@ jobs:
             if [[ "${{ github.event.inputs.feature_usb3_2 }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_USB_SUPERSPEED
             fi
-            if [[ "${{ github.event.inputs.feature_nvidia_gpu }}" == "true" ]]; then
+            if [[ "${{ github.event.inputs.gpu_support }}" == "nvidia" ]]; then
               ./scripts/config --enable CONFIG_DRM_NOUVEAU
-            fi
-            if [[ "${{ github.event.inputs.feature_amd_gpu }}" == "true" ]]; then
+            elif [[ "${{ github.event.inputs.gpu_support }}" == "amd" ]]; then
               ./scripts/config --enable CONFIG_DRM_AMDGPU
             fi
-            if [[ "${{ github.event.inputs.feature_intel_eth }}" == "true" ]]; then
+            if [[ "${{ github.event.inputs.wired_net }}" == "intel" || "${{ github.event.inputs.wired_net }}" == "both" ]]; then
               ./scripts/config --enable CONFIG_E1000E
-              ./scripts/config --enable CONFIG_IGB
             fi
-            if [[ "${{ github.event.inputs.feature_realtek_eth }}" == "true" ]]; then
+            if [[ "${{ github.event.inputs.wired_net }}" == "realtek" || "${{ github.event.inputs.wired_net }}" == "both" ]]; then
               ./scripts/config --enable CONFIG_R8169
             fi
-            if [[ "${{ github.event.inputs.feature_intel_wifi }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_IWLWIFI
-            fi
-            if [[ "${{ github.event.inputs.feature_broadcom_wifi }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_BRCMFMAC
-            fi
-            if [[ "${{ github.event.inputs.feature_bluetooth }}" == "true" ]]; then
+            if [[ "${{ github.event.inputs.wireless_bt }}" != "none" ]]; then
               ./scripts/config --enable CONFIG_BT
             fi
             if [[ "${{ github.event.inputs.feature_amd_platform }}" == "true" ]]; then
               ./scripts/config --enable CONFIG_AMD_IOMMU
             fi
-            if [[ "${{ github.event.inputs.feature_uvc }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_VIDEO_CLASS
-            fi
-            if [[ "${{ github.event.inputs.feature_zstd }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_ZSTD_COMPRESS
-            fi
-            if [[ "${{ github.event.inputs.feature_usb_mass_storage }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_STORAGE
-            fi
-            if [[ "${{ github.event.inputs.feature_fingerprint }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_FINGERPRINT
-            fi
-            if [[ "${{ github.event.inputs.feature_ir }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_IR_CORE
-            fi
-            if [[ "${{ github.event.inputs.feature_facecam }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_VIDEO_OV2640
-            fi
-            if [[ "${{ github.event.inputs.feature_touchscreen }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_TOUCHSCREEN
-            fi
-            if [[ "${{ github.event.inputs.feature_sensors }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_IIO
-            fi
-            if [[ "${{ github.event.inputs.feature_gps }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_GNSS
-            fi
-            if [[ "${{ github.event.inputs.feature_mobile_wwan }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_NET_CDC_MBIM
-            fi
-            if [[ "${{ github.event.inputs.feature_modem }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_ACM
-            fi
-            if [[ "${{ github.event.inputs.feature_printer }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_PRINTER
-            fi
-            if [[ "${{ github.event.inputs.feature_digital_cam }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_PTP
-            fi
-            if [[ "${{ github.event.inputs.feature_misc_usb }}" == "true" ]]; then
-              ./scripts/config --enable CONFIG_USB_EMI26
-            fi
+            # 默认开启项
+            ./scripts/config --enable CONFIG_USB_VIDEO_CLASS
+            ./scripts/config --enable CONFIG_ZSTD_COMPRESS
+            ./scripts/config --enable CONFIG_USB_STORAGE
+            ./scripts/config --enable CONFIG_USB_PRINTER
 
             if make help 2>/dev/null | head -n 50 | grep -q olddefconfig; then
               make olddefconfig
@@ -1057,13 +837,13 @@ jobs:
             fi
           fi
 
-      - name: 显示关键配置状态 (验证)
+      - name: 显示关键配置状态
         run: |
           cd $KERNEL_SRC
           echo "=== 已启用的配置项 (部分) ==="
-          grep -E "CONFIG_USB_VIDEO_CLASS|CONFIG_ZSTD_COMPRESS|CONFIG_USB_STORAGE|CONFIG_FINGERPRINT|CONFIG_IR_CORE|CONFIG_TOUCHSCREEN|CONFIG_IIO|CONFIG_GNSS|CONFIG_USB_NET_CDC_MBIM|CONFIG_USB_PRINTER|CONFIG_USB_PTP|CONFIG_DRM_NOUVEAU|CONFIG_DRM_AMDGPU|CONFIG_E1000E|CONFIG_R8169|CONFIG_IWLWIFI|CONFIG_BRCMFMAC|CONFIG_BT|CONFIG_AMD_IOMMU" .config || true
+          grep -E "CONFIG_USB_VIDEO_CLASS|CONFIG_ZSTD_COMPRESS|CONFIG_USB_STORAGE|CONFIG_USB_PRINTER|CONFIG_DRM_NOUVEAU|CONFIG_DRM_AMDGPU|CONFIG_E1000E|CONFIG_R8169|CONFIG_IWLWIFI|CONFIG_BRCMFMAC|CONFIG_BT|CONFIG_AMD_IOMMU|CONFIG_KVM|CONFIG_VIRTIO" .config || true
 
-      - name: 编译内核 (生成二进制 deb 包)
+      - name: 编译内核
         run: |
           cd $KERNEL_SRC
           export KBUILD_CFLAGS="-fno-pie"
@@ -1077,7 +857,7 @@ jobs:
             make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
           fi
 
-      - name: 编译 USB/IP 用户空间工具 (如果启用)
+      - name: 编译 USB/IP 工具
         if: github.event.inputs.feature_usbip == 'true'
         run: |
           cd $KERNEL_SRC/tools/usb/usbip
@@ -1105,81 +885,31 @@ jobs:
           echo "=== USB/IP 工具打包完成 ==="
           ls -la /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz
 
-      - name: 收集构建产物 (分离 deb、内核模块、usbip)
+      - name: 收集构建产物
         run: |
           mkdir -p artifacts
-
           cp $KERNEL_SRC/../*.deb artifacts/ 2>/dev/null || true
-          echo "=== 收集到的 deb 包 ==="
-          ls -la artifacts/*.deb || echo "未找到 deb 包"
-
           cd $KERNEL_SRC
           MODULE_ZIP="$GITHUB_WORKSPACE/artifacts/${ARTIFACT_NAME}-modules.zip"
           find . -name "*.ko" -type f | zip -q -@ "${MODULE_ZIP}"
           find . -name "*.ko" -type f > $GITHUB_WORKSPACE/artifacts/modules-list.txt
-          echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
-
           if [ -f /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz ]; then
             cp /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
-            echo "USB/IP 工具已复制到 artifacts"
-          else
-            echo "警告: USB/IP 工具包未找到，跳过"
           fi
-
           cd $GITHUB_WORKSPACE/artifacts
           cat > RELEASE_INFO.txt << EOF
           内核版本：${KERNEL_VERSION}
           构建时间：$(date)
           GitHub 运行编号：${{ github.run_number }}
-
-          用户选择的功能：
-          - 基础系统配置: ${{ github.event.inputs.feature_base }}
-          - USB Gadget/UDC: ${{ github.event.inputs.feature_usb_gadget }}
-          - USB 转串口: ${{ github.event.inputs.feature_usb_serial }}
-          - USB/IP: ${{ github.event.inputs.feature_usbip }}
-          - LXC 容器: ${{ github.event.inputs.feature_lxc }}
-          - VHD 启动: ${{ github.event.inputs.feature_vhd }}
-          - KVM/VFIO: ${{ github.event.inputs.feature_kvm_vfio }}
-          - Docker/Podman: ${{ github.event.inputs.feature_docker }}
-          - Btrfs: ${{ github.event.inputs.feature_btrfs }}
-          - RTL8XXXU: ${{ github.event.inputs.feature_rtl8xxxu }}
-          - Apple 驱动: ${{ github.event.inputs.feature_apple }}
-          - 音频支持: ${{ github.event.inputs.feature_audio }}
-          - Android 容器: ${{ github.event.inputs.feature_android }}
-          - KernelSU 基础: ${{ github.event.inputs.feature_ksu }}
-          - xHCI 主机控制器: ${{ github.event.inputs.feature_xhci }}
-          - USB 3.2 SuperSpeed: ${{ github.event.inputs.feature_usb3_2 }}
-          - QEMU 虚拟化: ${{ github.event.inputs.feature_qemu }}
-          - NVIDIA 显卡: ${{ github.event.inputs.feature_nvidia_gpu }}
-          - AMD 显卡: ${{ github.event.inputs.feature_amd_gpu }}
-          - Intel 有线网卡: ${{ github.event.inputs.feature_intel_eth }}
-          - Realtek 有线网卡: ${{ github.event.inputs.feature_realtek_eth }}
-          - Intel 无线网卡: ${{ github.event.inputs.feature_intel_wifi }}
-          - Broadcom 无线网卡: ${{ github.event.inputs.feature_broadcom_wifi }}
-          - 蓝牙支持: ${{ github.event.inputs.feature_bluetooth }}
-          - AMD 平台驱动: ${{ github.event.inputs.feature_amd_platform }}
-          - UVC 摄像头: ${{ github.event.inputs.feature_uvc }}
-          - ZSTD 压缩: ${{ github.event.inputs.feature_zstd }}
-          - USB 大容量存储: ${{ github.event.inputs.feature_usb_mass_storage }}
-          - 指纹识别: ${{ github.event.inputs.feature_fingerprint }}
-          - 红外线设备: ${{ github.event.inputs.feature_ir }}
-          - 人脸识别摄像头: ${{ github.event.inputs.feature_facecam }}
-          - 触摸屏: ${{ github.event.inputs.feature_touchscreen }}
-          - 传感器 (重力/加速度/环境光): ${{ github.event.inputs.feature_sensors }}
-          - GPS/北斗: ${{ github.event.inputs.feature_gps }}
-          - 移动通信 3G/4G/5G: ${{ github.event.inputs.feature_mobile_wwan }}
-          - 调制解调器/传真: ${{ github.event.inputs.feature_modem }}
-          - 打印机/扫描仪: ${{ github.event.inputs.feature_printer }}
-          - 数码相机驱动: ${{ github.event.inputs.feature_digital_cam }}
-          - 其他 USB 设备: ${{ github.event.inputs.feature_misc_usb }}
-
-          产物文件：
-          - *.deb                : 内核安装包
-          - *-modules.zip        : 内核模块 (.ko)
-          - usbip-tools-*.tar.gz : USB/IP 用户空间工具（如启用）
+          虚拟化与 QEMU：${{ github.event.inputs.feature_virt }}
+          内核增强：${{ github.event.inputs.feature_enhance }}
+          显卡支持：${{ github.event.inputs.gpu_support }}
+          有线网卡：${{ github.event.inputs.wired_net }}
+          无线与蓝牙：${{ github.event.inputs.wireless_bt }}
+          扩展外设集：${{ github.event.inputs.extra_peripherals }}
           EOF
 
-      - name: 上传构建产物到临时 Artifact（供 Release 使用）
+      - name: 上传 Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
@@ -1197,73 +927,19 @@ jobs:
           name: ${{ env.ARTIFACT_NAME }}
           path: release-files/
 
-      - name: 列出待发布文件
-        run: |
-          echo "=== release-files 目录内容 ==="
-          ls -la release-files/
-
-      - name: 创建 GitHub Release 并分别上传文件
+      - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.KERNEL_VERSION }}-${{ github.run_number }}
           name: Linux ${{ env.KERNEL_VERSION }} 定制内核
           body: |
             ## 📦 Linux ${{ env.KERNEL_VERSION }} 定制内核
-
-            **构建时间：** $(date)
-            **用户选择的功能：**
-            - 基础系统配置: ${{ github.event.inputs.feature_base }}
-            - USB Gadget/UDC: ${{ github.event.inputs.feature_usb_gadget }}
-            - USB 转串口: ${{ github.event.inputs.feature_usb_serial }}
-            - USB/IP: ${{ github.event.inputs.feature_usbip }}
-            - LXC 容器: ${{ github.event.inputs.feature_lxc }}
-            - VHD 启动: ${{ github.event.inputs.feature_vhd }}
-            - KVM/VFIO: ${{ github.event.inputs.feature_kvm_vfio }}
-            - Docker/Podman: ${{ github.event.inputs.feature_docker }}
-            - Btrfs: ${{ github.event.inputs.feature_btrfs }}
-            - RTL8XXXU: ${{ github.event.inputs.feature_rtl8xxxu }}
-            - Apple 驱动: ${{ github.event.inputs.feature_apple }}
-            - 音频支持: ${{ github.event.inputs.feature_audio }}
-            - Android 容器: ${{ github.event.inputs.feature_android }}
-            - KernelSU 基础: ${{ github.event.inputs.feature_ksu }}
-            - xHCI 主机控制器: ${{ github.event.inputs.feature_xhci }}
-            - USB 3.2 SuperSpeed: ${{ github.event.inputs.feature_usb3_2 }}
-            - QEMU 虚拟化: ${{ github.event.inputs.feature_qemu }}
-            - NVIDIA 显卡: ${{ github.event.inputs.feature_nvidia_gpu }}
-            - AMD 显卡: ${{ github.event.inputs.feature_amd_gpu }}
-            - Intel 有线网卡: ${{ github.event.inputs.feature_intel_eth }}
-            - Realtek 有线网卡: ${{ github.event.inputs.feature_realtek_eth }}
-            - Intel 无线网卡: ${{ github.event.inputs.feature_intel_wifi }}
-            - Broadcom 无线网卡: ${{ github.event.inputs.feature_broadcom_wifi }}
-            - 蓝牙支持: ${{ github.event.inputs.feature_bluetooth }}
-            - AMD 平台驱动: ${{ github.event.inputs.feature_amd_platform }}
-            - UVC 摄像头: ${{ github.event.inputs.feature_uvc }}
-            - ZSTD 压缩: ${{ github.event.inputs.feature_zstd }}
-            - USB 大容量存储: ${{ github.event.inputs.feature_usb_mass_storage }}
-            - 指纹识别: ${{ github.event.inputs.feature_fingerprint }}
-            - 红外线设备: ${{ github.event.inputs.feature_ir }}
-            - 人脸识别摄像头: ${{ github.event.inputs.feature_facecam }}
-            - 触摸屏: ${{ github.event.inputs.feature_touchscreen }}
-            - 传感器 (重力/加速度/环境光): ${{ github.event.inputs.feature_sensors }}
-            - GPS/北斗: ${{ github.event.inputs.feature_gps }}
-            - 移动通信 3G/4G/5G: ${{ github.event.inputs.feature_mobile_wwan }}
-            - 调制解调器/传真: ${{ github.event.inputs.feature_modem }}
-            - 打印机/扫描仪: ${{ github.event.inputs.feature_printer }}
-            - 数码相机驱动: ${{ github.event.inputs.feature_digital_cam }}
-            - 其他 USB 设备: ${{ github.event.inputs.feature_misc_usb }}
-
-            ### 📁 产物说明
-            - **.deb 文件**：内核镜像、头文件、C 库开发包
-            - **Kernel-Linux-版本-x86_64-modules.zip**：所有内核模块文件（.ko）
-            - **usbip-tools-linux-版本.tar.gz**：USB/IP 用户空间工具（如启用）
-            - **RELEASE_INFO.txt**：构建详细信息
-
-            ### 🚀 快速安装
-            ```bash
-            sudo dpkg -i linux-image-*.deb linux-headers-*.deb linux-libc-dev*.deb
-            unzip Kernel-Linux-*-modules.zip -d /lib/modules/
-            tar -xzf usbip-tools-linux-*.tar.gz && cd usbip-tools/ && sudo ./install.sh
-            sudo reboot
+            **虚拟化与 QEMU：** ${{ github.event.inputs.feature_virt }}
+            **内核增强：** ${{ github.event.inputs.feature_enhance }}
+            **显卡支持：** ${{ github.event.inputs.gpu_support }}
+            **有线网卡：** ${{ github.event.inputs.wired_net }}
+            **无线与蓝牙：** ${{ github.event.inputs.wireless_bt }}
+            **扩展外设集：** ${{ github.event.inputs.extra_peripherals }}
           files: |
             release-files/*.deb
             release-files/*-modules.zip
