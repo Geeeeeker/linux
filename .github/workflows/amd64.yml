@@ -854,9 +854,17 @@ jobs:
           echo "=== 已启用的配置项 (部分) ==="
           grep -E "CONFIG_USB_VIDEO_CLASS|CONFIG_ZSTD_COMPRESS|CONFIG_USB_STORAGE|CONFIG_USB_PRINTER|CONFIG_DRM_NOUVEAU|CONFIG_DRM_AMDGPU|CONFIG_E1000E|CONFIG_R8169|CONFIG_IWLWIFI|CONFIG_BRCMFMAC|CONFIG_BT|CONFIG_AMD_IOMMU|CONFIG_KVM|CONFIG_VIRTIO" .config || true
 
-      - name: 编译内核
+      - name: 编译内核 (生成二进制 deb 包)
         run: |
           cd $KERNEL_SRC
+          # 修复权限问题：确保 scripts 下的可执行文件有执行权限
+          chmod +x scripts/basic/fixdep
+          chmod +x scripts/mod/modpost
+          chmod +x scripts/kconfig/conf
+          find scripts -name "*.sh" -exec chmod +x {} \;
+          # 可选：确保其他可能需要的工具也有执行权限
+          chmod +x scripts/sorttable 2>/dev/null || true
+          chmod +x scripts/asn1_compiler 2>/dev/null || true
           export KBUILD_CFLAGS="-fno-pie"
           export KCFLAGS="-fno-pie -Wno-attributes -Wno-error"
           export KDEB_SOURCECHECK=false
