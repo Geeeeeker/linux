@@ -957,17 +957,55 @@ jobs:
           name: Linux ${{ env.KERNEL_VERSION }} 定制内核
           body: |
             ## 📦 Linux ${{ env.KERNEL_VERSION }} 定制内核
-            **虚拟化与 QEMU：** ${{ github.event.inputs.feature_virt }}
-            **内核增强：** ${{ github.event.inputs.feature_enhance }}
-            **UVC 摄像头：** ${{ github.event.inputs.feature_uvc }}
-            **显卡支持：** ${{ github.event.inputs.gpu_support }}
-            **有线网卡：** ${{ github.event.inputs.wired_net }}
-            **无线与蓝牙：** ${{ github.event.inputs.wireless_bt }}
-            **扩展外设集：** ${{ github.event.inputs.extra_peripherals }}
-          files: |
-            release-files/*.deb
-            release-files/*-modules.zip
-            release-files/usbip-tools-*.tar.gz
-            release-files/RELEASE_INFO.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            **构建时间：** $(date)
+            **GitHub 运行编号：** ${{ github.run_number }}
+
+            ### 🔧 用户选择的功能
+            - 基础系统配置 (含 Intel/AMD 平台与固态驱动): ${{ github.event.inputs.feature_base }}
+            - USB Gadget / dwc3 / 大容量存储(UMS): ${{ github.event.inputs.feature_usb_gadget }}
+            - USB 转串口 (CH340/CH341, CH343P): ${{ github.event.inputs.feature_usb_serial }}
+            - USB/IP 支持: ${{ github.event.inputs.feature_usbip }}
+            - LXC 容器完整支持: ${{ github.event.inputs.feature_lxc }}
+            - VHD 启动支持 (loop + NTFS3): ${{ github.event.inputs.feature_vhd }}
+            - 虚拟化与 QEMU 支持 (KVM / VFIO / Virtio / 9p): ${{ github.event.inputs.feature_virt }}
+            - Docker / Podman 完整支持: ${{ github.event.inputs.feature_docker }}
+            - Btrfs 文件系统支持 (含 ZSTD 压缩): ${{ github.event.inputs.feature_btrfs }}
+            - Apple Mac 设备驱动: ${{ github.event.inputs.feature_apple }}
+            - 音频支持 (Intel HDA / 杜比 / HDMI / ALSA): ${{ github.event.inputs.feature_audio }}
+            - 内核增强 (KernelSU / Kprobes / Android 容器 / 符号表): ${{ github.event.inputs.feature_enhance }}
+            - xHCI 主机控制器支持 (USB 3.x 主控): ${{ github.event.inputs.feature_xhci }}
+            - USB 3.2 SuperSpeed 支持: ${{ github.event.inputs.feature_usb3_2 }}
+            - UVC 摄像头支持: ${{ github.event.inputs.feature_uvc }}
+            - AMD 主板平台驱动: ${{ github.event.inputs.feature_amd_platform }}
+            - 显卡支持: ${{ github.event.inputs.gpu_support }}
+            - 有线网卡支持: ${{ github.event.inputs.wired_net }}
+            - 无线网卡与蓝牙支持: ${{ github.event.inputs.wireless_bt }}
+            - 扩展外设集 (指纹/红外/触摸屏/传感器/GPS/4G/相机/杂项USB): ${{ github.event.inputs.extra_peripherals }}
+
+            ### ✅ 默认开启的功能
+            - RTL8XXXU 无线网卡驱动 (模块)
+            - USB 打印机支持
+            - Intel 锐炬独显基础支持
+            - 常见固态硬盘优化 (NVMe/SATA)
+
+            ### 📁 产物说明
+            - **.deb 文件**：内核镜像、头文件、C 库开发包
+            - **Kernel-Linux-版本-x86_64-modules.zip**：所有内核模块文件（.ko）
+            - **usbip-tools-linux-版本.tar.gz**：USB/IP 用户空间工具（如启用）
+            - **RELEASE_INFO.txt**：构建详细信息
+
+            ### 🚀 快速安装
+            ```bash
+            # 安装内核
+            sudo dpkg -i linux-image-*.deb linux-headers-*.deb linux-libc-dev*.deb
+
+            # （可选）提取内核模块
+            unzip Kernel-Linux-*-modules.zip -d /lib/modules/
+
+            # （可选）安装 USB/IP 工具
+            tar -xzf usbip-tools-linux-*.tar.gz
+            cd usbip-tools/
+            sudo ./install.sh
+
+            sudo reboot
