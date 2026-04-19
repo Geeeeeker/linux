@@ -220,7 +220,7 @@ jobs:
           CONFIG_RTL8XXXU=m
           CONFIG_RTL8XXXU_UNTESTED=y
 
-          # ========== V4L2 / Media 框架完整支持 (Facetime HD 依赖) ==========
+          # ========== V4L2 / Media 框架完整支持 ==========
           CONFIG_MEDIA_SUPPORT=y
           CONFIG_MEDIA_CAMERA_SUPPORT=y
           CONFIG_MEDIA_CONTROLLER=y
@@ -235,21 +235,12 @@ jobs:
           CONFIG_V4L_MEM2MEM_DRIVERS=y
 
           # ========== Apple Mac 设备驱动支持 ==========
-          # 1. 雷电（Thunderbolt）/ USB4 支持
           CONFIG_USB4=m
-
-          # 2. Apple 触控板与鼠标
           CONFIG_MOUSE_BCM5974=y
           CONFIG_HID_MAGICMOUSE=y
-
-          # 3. Apple 键盘与驱动框架
           CONFIG_MACINTOSH_DRIVERS=y
           CONFIG_HID_APPLE=y
-
-          # 4. 新款 Mac 的 SPI 键盘和触控板驱动
           CONFIG_KEYBOARD_APPLESPI=y
-
-          # 5. Apple SMC (系统管理控制器)
           CONFIG_SENSORS_APPLESMC=y
 
           # ========== 杜比音频支持 (HDMI/DP 音频) ==========
@@ -274,63 +265,42 @@ jobs:
           scripts/kconfig/merge_config.sh -m .config custom-features.cfg
           make olddefconfig
 
+      - name: 强制启用 DWC3 主机/设备模式 (修复 Gadget 支持)
+        run: |
+          cd $KERNEL_SRC
+          scripts/config --enable CONFIG_USB_DWC3_HOST
+          scripts/config --enable CONFIG_USB_DWC3_GADGET
+          scripts/config --enable CONFIG_USB_DWC3_DUAL_ROLE
+          make olddefconfig
+
       - name: 显示关键配置状态（用于验证）
         run: |
           cd $KERNEL_SRC
-          echo "=== 用户指定基础配置 ==="
-          grep -E "CONFIG_SYSVIPC|CONFIG_EPOLL|CONFIG_EVENTFD|CONFIG_TMPFS" .config | head -10 || true
           echo "=== USB Gadget / UDC 配置 ==="
-          grep -E "CONFIG_USB_GADGET|CONFIG_USB_CONFIGFS|CONFIG_USB_LIBCOMPOSITE|CONFIG_USB_DWC3" .config | head -10 || true
+          grep -E "CONFIG_USB_GADGET|CONFIG_USB_CONFIGFS|CONFIG_USB_DWC3" .config | head -15 || true
           echo "=== USB 转串口 (CH343P) ==="
           grep "CONFIG_USB_SERIAL_CH343" .config || true
           echo "=== USB/IP ==="
           grep "CONFIG_USBIP" .config || true
-          echo "=== NTFS3 / VHD 支持 ==="
-          grep -E "CONFIG_NTFS3|CONFIG_BLK_DEV_LOOP" .config || true
-          echo "=== Btrfs 文件系统 ==="
-          grep "CONFIG_BTRFS_FS" .config || true
-          echo "=== RTL8xxxU 无线网卡 ==="
-          grep "CONFIG_RTL8XXXU" .config || true
-          echo "=== UVC, ZSTD, KVM, VFIO 等 ==="
-          grep -E "CONFIG_USB_VIDEO_CLASS|CONFIG_ZSTD|CONFIG_KVM|CONFIG_VFIO|CONFIG_DRM_I915_GVT" .config || true
-          echo "=== Docker / Podman 支持 ==="
-          grep -E "CONFIG_OVERLAY_FS|CONFIG_FUSE_FS|CONFIG_SECCOMP|CONFIG_TUN" .config || true
-          echo "=== V4L2 / Media 框架 (Facetime HD 依赖) ==="
-          grep -E "CONFIG_MEDIA_SUPPORT|CONFIG_VIDEO_DEV|CONFIG_VIDEO_V4L2|CONFIG_VIDEOBUF2" .config || true
-          echo "=== Apple 设备驱动 ==="
-          grep -E "CONFIG_USB4|CONFIG_MOUSE_BCM5974|CONFIG_HID_MAGICMOUSE|CONFIG_MACINTOSH_DRIVERS|CONFIG_HID_APPLE|CONFIG_KEYBOARD_APPLESPI|CONFIG_SENSORS_APPLESMC" .config || true
-          echo "=== 杜比音频支持 ==="
-          grep -E "CONFIG_SND_HDA_CODEC_DOLBY|CONFIG_SND_HDA_CODEC_HDMI|CONFIG_SND_HDA_CODEC_CS8409" .config || true
+          echo "=== 其他关键项 ==="
+          grep -E "CONFIG_NTFS3|CONFIG_BTRFS|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_RTL8XXXU" .config || true
 
       - name: 编译内核（生成 deb 包）
         run: |
           cd $KERNEL_SRC
           make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
 
-      # 由于 Facetime HD 模块与当前内核符号不兼容，暂时注释掉以避免构建失败。
-      # - name: 编译 Facetime HD 摄像头驱动 (外部模块)
-      #   run: |
-      #     cd $KERNEL_SRC
-      #     git clone https://github.com/patjak/facetimehd.git
-      #     cd facetimehd
-      #     make -C $KERNEL_SRC M=$PWD modules
-      #     sudo make -C $KERNEL_SRC M=$PWD modules_install
-      #     mkdir -p $GITHUB_WORKSPACE/artifacts/facetimehd
-      #     find . -name "*.ko" -exec cp --parents {} $GITHUB_WORKSPACE/artifacts/facetimehd/ \;
-
       - name: 编译 USB/IP 用户空间工具
         run: |
           cd $KERNEL_SRC/tools/usb/usbip
           echo "=== 开始编译 USB/IP 工具 ==="
           ./autogen.sh
-          # 禁用将警告视为错误，避免因格式截断警告导致编译失败
           CFLAGS="-Wno-error" ./configure --prefix=/usr/local
           make -j$(nproc)
           mkdir -p /tmp/usbip-tools/usr/local/bin
           mkdir -p /tmp/usbip-tools/usr/local/lib
           mkdir -p /tmp/usbip-tools/usr/local/sbin
           make install DESTDIR=/tmp/usbip-tools
-          # 确保动态库被复制
           find /tmp/usbip-tools -name "*.so*" -exec cp -P {} /tmp/usbip-tools/usr/local/lib/ \; 2>/dev/null || true
           cat > /tmp/usbip-tools/install.sh << 'EOF'
           #!/bin/bash
@@ -342,10 +312,9 @@ jobs:
           echo "USB/IP 工具安装完成！"
           EOF
           chmod +x /tmp/usbip-tools/install.sh
-          # 打包 USB/IP 工具到 /tmp
           cd /tmp
           tar -czf usbip-tools-linux-${KERNEL_VERSION}.tar.gz usbip-tools/
-          echo "=== USB/IP 工具编译并打包完成 ==="
+          echo "=== USB/IP 工具打包完成 ==="
           ls -la /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz
 
       - name: 收集所有产物
@@ -357,15 +326,15 @@ jobs:
           echo "=== 收集到的 deb 包 ==="
           ls -la artifacts/*.deb || echo "未找到 deb 包"
 
-          # 2. 打包内核模块为 zip，直接放在 artifacts 根目录
+          # 2. 打包内核模块为 zip
           cd $KERNEL_SRC
           MODULE_ZIP="$GITHUB_WORKSPACE/artifacts/${ARTIFACT_NAME}-modules.zip"
           find . -name "*.ko" -type f | zip -q -@ "${MODULE_ZIP}"
           echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
 
-          # 3. 复制 USB/IP 工具包到 artifacts 根目录
+          # 3. 复制 USB/IP 工具包到 artifacts 根目录 (修复路径错误)
           if [ -f /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz ]; then
-            cp /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz artifacts/
+            cp /tmp/usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
             echo "USB/IP 工具包已复制"
           else
             echo "警告: USB/IP 工具包未找到，跳过"
@@ -389,23 +358,20 @@ jobs:
 
           已启用的关键功能：
           - 基础系统配置（SYSVIPC、EPOLL、TMPFS 等）
-          - USB Gadget / UDC / libcomposite / 大容量存储
+          - USB Gadget / UDC / libcomposite（强制启用 DWC3 双角色模式）
           - USB 转串口驱动（CH340/CH341, CH343P 作为模块）
-          - USB/IP 客户端/服务端（直接编译进内核 + 用户空间工具）
-          - LXC 容器完整支持（namespaces + cgroups）
-          - VHD 启动支持（loop 设备 + NTFS3 驱动）
-          - UVC 摄像头支持（直接编译进内核）
-          - Btrfs 文件系统支持（作为模块）
-          - RTL8xxxU 无线网卡支持（作为模块）
-          - ZSTD 压缩算法支持（直接编译进内核）
-          - KVM 虚拟化支持 (Intel VT-x)（直接编译进内核）
-          - VFIO 设备直通支持（直接编译进内核）
-          - Intel GVT-g 图形虚拟化支持（直接编译进内核）
-          - Docker / Podman 完整支持（OverlayFS, FUSE, seccomp, TUN）
-          - Apple Mac 设备驱动 (雷电, 触控板, 键盘, SMC)
-          - 杜比音频支持 (HDMI/DP 音频编解码器)
+          - USB/IP（内核驱动 + 用户空间工具）
+          - LXC 容器完整支持
+          - VHD 启动支持（NTFS3）
+          - UVC 摄像头、ZSTD 压缩
+          - KVM + VFIO + Intel GVT-g 直通
+          - Docker/Podman 完整支持
+          - Btrfs 文件系统支持（模块）
+          - RTL8xxxU 无线网卡支持（模块）
+          - Apple Mac 设备驱动
+          - 杜比音频支持
 
-          注意：Facetime HD 摄像头驱动由于 V4L2 符号不兼容，未包含在此次构建中。你可以稍后手动编译。
+          注意：Facetime HD 驱动由于 V4L2 符号不兼容，未包含在此次构建中。
           EOF
 
           echo "=== artifacts 目录最终内容 ==="
@@ -447,27 +413,24 @@ jobs:
             **构建时间：** $(date)
             
             ### ✨ 已启用的功能
-            
             - ✅ 基础系统配置（SYSVIPC、EPOLL、TMPFS 等）
-            - ✅ USB Gadget / UDC / libcomposite
+            - ✅ USB Gadget / UDC / libcomposite（强制 DWC3 双角色模式）
             - ✅ USB 转串口：CH340/CH341、CH343P（模块）
-            - ✅ USB/IP（直接编译进内核 + 用户空间工具）
+            - ✅ USB/IP（内核驱动 + 用户空间工具）
             - ✅ LXC 容器完整支持
             - ✅ VHD 启动支持（NTFS3）
             - ✅ UVC 摄像头、ZSTD 压缩
             - ✅ KVM + VFIO + Intel GVT-g 直通
-            - ✅ Docker/Podman（OverlayFS, FUSE, seccomp, TUN）
+            - ✅ Docker/Podman 完整支持
             - ✅ Btrfs 文件系统支持（模块）
             - ✅ RTL8xxxU 无线网卡支持（模块）
-            - ✅ Apple Mac 设备驱动 (雷电, 触控板, 键盘, SMC)
-            - ✅ 杜比音频支持 (HDMI/DP 音频编解码器)
-            
-            > ⚠️ **Facetime HD 驱动**由于 V4L2 符号兼容性问题未包含在本次构建中。如有需要，请手动从 [patjak/facetimehd](https://github.com/patjak/facetimehd) 编译。
+            - ✅ Apple Mac 设备驱动
+            - ✅ 杜比音频支持
             
             ### 📁 产物文件
             - **.deb 文件**：内核镜像、头文件、C 库开发包
             - **modules.zip**：所有内核模块文件（.ko）
-            - **usbip-tools-*.tar.gz**：USB/IP 用户空间工具（包含安装脚本）
+            - **usbip-tools-*.tar.gz**：USB/IP 用户空间工具（含安装脚本）
             - **RELEASE_INFO.txt**：构建详细信息
             
             ### 🚀 快速安装
