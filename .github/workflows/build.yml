@@ -138,7 +138,7 @@ jobs:
           echo "下载 Linux ${KERNEL_VERSION} 源码..."
           wget -q "https://github.com/torvalds/linux/archive/refs/tags/v${KERNEL_VERSION}.tar.gz" -O linux.tar.gz
 
-      # ---------- 移除编译目录缓存，确保每次手动触发都重新配置编译 ----------
+      # ---------- 解压源码，无编译缓存，每次全新构建 ----------
       - name: 解压源码并设置工作目录
         run: |
           tar -xzf linux.tar.gz
@@ -205,7 +205,7 @@ jobs:
           CONFIG_USB_SERIAL_CH341=y
           CONFIG_USB_SERIAL_CH343=m
           EOF
-            # 下载 CH343 驱动源码（增加重试与错误处理）
+            # 下载 CH343 驱动源码
             if [ ! -f drivers/usb/serial/ch343.c ]; then
               wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败，继续编译"
               wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败，继续编译"
@@ -376,7 +376,7 @@ jobs:
           EOF
           fi
 
-      - name: 应用自定义配置 (兼容新旧内核)
+      - name: 应用自定义配置 (合并并强制使能关键项)
         run: |
           cd $KERNEL_SRC
           if [ -f scripts/kconfig/merge_config.sh ]; then
@@ -384,11 +384,44 @@ jobs:
             scripts/kconfig/merge_config.sh -m .config custom-features.cfg
           else
             echo "merge_config.sh 不存在，手动追加配置..."
-            cp .config .config.orig
             cat custom-features.cfg >> .config
-            yes "" | make oldconfig
           fi
           make olddefconfig || make oldconfig
+
+          # 使用 scripts/config 强制启用可能被依赖关闭的选项
+          if [ -f scripts/config ]; then
+            echo "强制启用关键配置..."
+            if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
+              ./scripts/config --enable CONFIG_USBIP_CORE
+              ./scripts/config --enable CONFIG_USBIP_VHCI_HCD
+              ./scripts/config --enable CONFIG_USBIP_HOST
+            fi
+            if [[ "${{ github.event.inputs.feature_usb_gadget }}" == "true" ]]; then
+              ./scripts/config --enable CONFIG_USB_GADGET
+              ./scripts/config --enable CONFIG_USB_CONFIGFS
+            fi
+            if [[ "${{ github.event.inputs.feature_kvm_vfio }}" == "true" ]]; then
+              ./scripts/config --enable CONFIG_KVM
+              ./scripts/config --enable CONFIG_KVM_INTEL
+            fi
+            if [[ "${{ github.event.inputs.feature_btrfs }}" == "true" ]]; then
+              ./scripts/config --module CONFIG_BTRFS_FS
+            fi
+            if [[ "${{ github.event.inputs.feature_docker }}" == "true" ]]; then
+              ./scripts/config --module CONFIG_OVERLAY_FS
+            fi
+            if [[ "${{ github.event.inputs.feature_vhd }}" == "true" ]]; then
+              ./scripts/config --enable CONFIG_NTFS3_FS
+            fi
+            make olddefconfig
+          else
+            echo "警告: scripts/config 不存在，跳过强制配置。"
+          fi
+
+      - name: 预编译 scripts 工具 (避免 headers 构建权限错误)
+        run: |
+          cd $KERNEL_SRC
+          make scripts
 
       - name: 显示关键配置状态 (验证)
         run: |
@@ -396,15 +429,15 @@ jobs:
           echo "=== 已启用的配置项 (部分) ==="
           grep -E "CONFIG_USB_GADGET|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS" .config || true
 
-      - name: 编译内核 (生成二进制 deb 包，兼容新旧目标)
+      - name: 编译内核 (生成二进制 deb 包)
         run: |
           cd $KERNEL_SRC
-          # 优先使用 bindeb-pkg，若失败则回退到 deb-pkg
-          if make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION} 2>&1 | grep -q "No rule to make target"; then
-            echo "bindeb-pkg 目标不存在，改用 deb-pkg"
-            make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
-          else
+          if make help | grep -q "bindeb-pkg"; then
+            echo "使用 bindeb-pkg 构建"
             make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION}
+          else
+            echo "使用 deb-pkg 构建"
+            make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
           fi
 
       - name: 编译 USB/IP 用户空间工具 (如果启用)
@@ -412,7 +445,6 @@ jobs:
         run: |
           cd $KERNEL_SRC/tools/usb/usbip
           echo "=== 开始编译 USB/IP 工具 ==="
-          # 确保 autotools 可用
           ./autogen.sh
           ./configure --prefix=/usr/local
           make -j$(nproc)
@@ -420,9 +452,7 @@ jobs:
           mkdir -p /tmp/usbip-tools/usr/local/lib
           mkdir -p /tmp/usbip-tools/usr/local/sbin
           make install DESTDIR=/tmp/usbip-tools
-          # 拷贝动态库（确保包含所有 .so 文件）
           find /tmp/usbip-tools -name "*.so*" -exec echo "库文件: {}" \;
-          # 生成安装脚本
           cat > /tmp/usbip-tools/install.sh << 'EOF'
           #!/bin/bash
           echo "安装 USB/IP 工具..."
@@ -440,7 +470,7 @@ jobs:
         run: |
           mkdir -p artifacts
 
-          # 1. 复制所有 deb 包到 artifacts 根目录
+          # 1. 复制所有 deb 包
           cp $KERNEL_SRC/../*.deb artifacts/ 2>/dev/null || true
           echo "=== 收集到的 deb 包 ==="
           ls -la artifacts/*.deb || echo "未找到 deb 包"
@@ -452,14 +482,14 @@ jobs:
           find . -name "*.ko" -type f > $GITHUB_WORKSPACE/artifacts/modules-list.txt
           echo "内核模块已打包至: ${ARTIFACT_NAME}-modules.zip"
 
-          # 3. USB/IP 工具打包（确保生成的文件存在）
+          # 3. USB/IP 工具打包
           if [ -d /tmp/usbip-tools ] && [ "$(ls -A /tmp/usbip-tools/usr/local/bin 2>/dev/null)" ]; then
             cd /tmp
             tar -czf usbip-tools-linux-${KERNEL_VERSION}.tar.gz usbip-tools/
             cp usbip-tools-linux-${KERNEL_VERSION}.tar.gz $GITHUB_WORKSPACE/artifacts/
             echo "USB/IP 工具已打包"
           else
-            echo "警告: USB/IP 工具目录为空，跳过打包。请检查编译日志。"
+            echo "警告: USB/IP 工具目录为空，跳过打包。"
           fi
 
           # 4. 生成说明文件
@@ -488,12 +518,12 @@ jobs:
           - Apache 符号支持: CONFIG_KALLSYMS=y, CONFIG_KALLSYMS_ALL=y
 
           产物文件：
-          - *.deb                : 内核安装包（通常包含 image、headers、libc-dev 三个）
-          - *-modules.zip        : 所有编译出的内核模块 (.ko)
+          - *.deb                : 内核安装包
+          - *-modules.zip        : 内核模块 (.ko)
           - usbip-tools-*.tar.gz : USB/IP 用户空间工具（如启用）
           EOF
 
-      - name: 上传产物 (临时存储，供 Release 使用)
+      - name: 上传产物 (临时存储)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
@@ -511,7 +541,7 @@ jobs:
           name: ${{ env.ARTIFACT_NAME }}
           path: release-files/
 
-      - name: 列出下载的文件 (调试)
+      - name: 列出下载的文件
         run: |
           echo "=== release-files 目录内容 ==="
           ls -la release-files/
@@ -544,7 +574,7 @@ jobs:
             - **Apache 符号支持**: CONFIG_KALLSYMS=y + CONFIG_KALLSYMS_ALL=y (完整)
 
             ### 📁 产物说明
-            - **.deb 文件**：内核镜像、头文件、C 库开发包（共 3 个）
+            - **.deb 文件**：内核镜像、头文件、C 库开发包
             - **Kernel-Linux-版本-x86_64-modules.zip**：所有内核模块文件（.ko）
             - **usbip-tools-linux-版本.tar.gz**：USB/IP 用户空间工具（如启用）
             - **RELEASE_INFO.txt**：构建详细信息
@@ -554,10 +584,10 @@ jobs:
             # 安装内核
             sudo dpkg -i linux-image-*.deb linux-headers-*.deb linux-libc-dev*.deb
 
-            # （可选）提取内核模块（通常已包含在镜像中）
+            # （可选）提取内核模块
             unzip Kernel-Linux-*-modules.zip -d /lib/modules/
 
-            # （可选）安装 USB/IP 工具（如已下载）
+            # （可选）安装 USB/IP 工具
             tar -xzf usbip-tools-linux-*.tar.gz
             cd usbip-tools/
             sudo ./install.sh
