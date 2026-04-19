@@ -863,7 +863,9 @@ jobs:
           export KCFLAGS="-fno-pie -Wno-attributes -Wno-error"
           export KDEB_SOURCECHECK=false
 
-          # 修复权限问题：确保 scripts 下的可执行文件有执行权限
+          # 先构建必要的内部工具，并修复权限
+          make -j$(nproc) scripts_basic
+          make -j$(nproc) scripts
           chmod +x scripts/basic/fixdep
           chmod +x scripts/kconfig/conf
           chmod +x scripts/mod/modpost 2>/dev/null || true
