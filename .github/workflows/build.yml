@@ -107,7 +107,7 @@ jobs:
       - name: 检出本仓库
         uses: actions/checkout@v4
 
-      - name: 安装基础编译依赖
+      - name: 安装编译依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -117,23 +117,19 @@ jobs:
             libusb-1.0-0-dev libxml2-dev \
             debhelper libdw-dev
 
-      - name: 根据内核版本选择 GCC 版本
-        id: setup-gcc
+      - name: 为旧内核安装 GCC 9（兼容性）
         run: |
           KERNEL_MAJOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f1)
-          KERNEL_MINOR=$(echo "${{ env.KERNEL_VERSION }}" | cut -d. -f2)
-          # 4.x 及更早内核需用 GCC 9 编译，5.4+ 可用系统默认 GCC 13
-          if [[ "$KERNEL_MAJOR" -lt 5 ]] || [[ "$KERNEL_MAJOR" -eq 5 && "$KERNEL_MINOR" -lt 4 ]]; then
-            echo "安装 GCC 9 以编译旧内核..."
+          if [[ "$KERNEL_MAJOR" -lt 5 ]]; then
+            echo "检测到旧内核版本 (${{ env.KERNEL_VERSION }})，安装 GCC 9 以解决兼容性问题..."
             sudo apt-get install -y gcc-9 g++-9
-            sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 60 --slave /usr/bin/g++ g++ /usr/bin/g++-9
-            sudo update-alternatives --set gcc /usr/bin/gcc-9
-            echo "USE_OLD_GCC=true" >> $GITHUB_ENV
+            sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90
+            sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
+            echo "当前 GCC 版本:"
+            gcc --version
           else
-            echo "使用系统默认 GCC 13..."
-            echo "USE_OLD_GCC=false" >> $GITHUB_ENV
+            echo "内核版本 >=5.0，使用默认 GCC。"
           fi
-          gcc --version
 
       - name: 打印编译环境信息
         run: |
@@ -168,7 +164,7 @@ jobs:
           mv linux-* linux-src
           echo "KERNEL_SRC=$(pwd)/linux-src" >> $GITHUB_ENV
 
-      # ---------- 内核配置与编译 ----------
+      # ---------- 内核配置 ----------
       - name: 生成主线默认配置
         run: |
           cd $KERNEL_SRC
@@ -226,6 +222,7 @@ jobs:
           CONFIG_USB_SERIAL_CH341=y
           CONFIG_USB_SERIAL_CH343=m
           EOF
+            # 下载 CH343 驱动源码
             if [ ! -f drivers/usb/serial/ch343.c ]; then
               wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.c -O drivers/usb/serial/ch343.c || echo "警告: 下载 ch343.c 失败"
               wget -q --tries=3 https://raw.githubusercontent.com/WCHSoftGroup/ch343ser_linux/master/driver/ch343.h -O drivers/usb/serial/ch343.h || echo "警告: 下载 ch343.h 失败"
@@ -407,12 +404,14 @@ jobs:
             cat custom-features.cfg >> .config.tmp
             mv .config.tmp .config
           fi
+
           if make help | grep -q olddefconfig; then
             make olddefconfig
           else
             echo "olddefconfig 不支持，使用 yes '' | make oldconfig"
             yes "" | make oldconfig
           fi
+
           if [ -f scripts/config ]; then
             echo "使用 scripts/config 强制启用关键选项..."
             if [[ "${{ github.event.inputs.feature_usbip }}" == "true" ]]; then
@@ -444,28 +443,18 @@ jobs:
             fi
           fi
 
-      - name: 预编译 scripts 工具
+      # ---------- 修复 PIC 错误并准备编译环境 ----------
+      - name: 预编译 scripts 和头文件（修复 PIC 错误）
         run: |
           cd $KERNEL_SRC
+          # 禁用 PIE，解决新 GCC 编译旧内核时的 "code model kernel does not support PIC mode" 错误
+          export KCFLAGS="-fno-pie"
+          export KAFLAGS="-fno-pie"
           make scripts
+          make prepare
+          make headers_install
 
-      - name: 显示关键配置状态 (验证)
-        run: |
-          cd $KERNEL_SRC
-          echo "=== 已启用的配置项 (部分) ==="
-          grep -E "CONFIG_USB_GADGET|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS" .config || true
-
-      - name: 编译内核 (生成二进制 deb 包)
-        run: |
-          cd $KERNEL_SRC
-          if make help | grep -q "bindeb-pkg"; then
-            echo "使用 bindeb-pkg 构建"
-            make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION}
-          else
-            echo "使用 deb-pkg 构建"
-            make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
-          fi
-
+      # ---------- 编译 USB/IP 工具（提前进行，确保产物）----------
       - name: 编译 USB/IP 用户空间工具 (如果启用)
         if: github.event.inputs.feature_usbip == 'true'
         run: |
@@ -494,6 +483,27 @@ jobs:
           echo "=== USB/IP 工具编译完成 ==="
           ls -la /tmp/usbip-tools/usr/local/bin/
           ls -la /tmp/usbip-tools/usr/local/lib/
+
+      - name: 显示关键配置状态 (验证)
+        run: |
+          cd $KERNEL_SRC
+          echo "=== 已启用的配置项 (部分) ==="
+          grep -E "CONFIG_USB_GADGET|CONFIG_USB_SERIAL_CH343|CONFIG_USBIP|CONFIG_NTFS3|CONFIG_KVM|CONFIG_OVERLAY_FS|CONFIG_BTRFS_FS|CONFIG_ASHMEM|CONFIG_KPROBES|CONFIG_KALLSYMS" .config || true
+
+      # ---------- 编译内核 ----------
+      - name: 编译内核 (生成二进制 deb 包)
+        run: |
+          cd $KERNEL_SRC
+          # 同样禁用 PIE 以保证整个内核编译顺利
+          export KCFLAGS="-fno-pie"
+          export KAFLAGS="-fno-pie"
+          if make help | grep -q "bindeb-pkg"; then
+            echo "使用 bindeb-pkg 构建"
+            make -j$(nproc) bindeb-pkg LOCALVERSION=-${KERNEL_VERSION}
+          else
+            echo "使用 deb-pkg 构建"
+            make -j$(nproc) deb-pkg LOCALVERSION=-${KERNEL_VERSION}
+          fi
 
       - name: 收集构建产物 (分离 deb、内核模块、usbip)
         run: |
@@ -552,25 +562,25 @@ jobs:
           - usbip-tools-*.tar.gz : USB/IP 用户空间工具（如启用）
           EOF
 
-      - name: 上传构建产物到临时 Artifact（供 Release 使用）
+      - name: 上传产物 (临时存储)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: artifacts/
-          retention-days: 7
+          retention-days: 30
 
   release:
     runs-on: ubuntu-24.04
     needs: build
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     steps:
-      - name: 下载 Artifact
+      - name: 下载产物
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: release-files/
 
-      - name: 列出待发布文件
+      - name: 列出下载的文件
         run: |
           echo "=== release-files 目录内容 ==="
           ls -la release-files/
