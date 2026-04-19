@@ -23,9 +23,6 @@ on:
           - '4.14'
           - '4.9'
           - '4.4'
-          - '3.18'
-          - '3.10'
-          - '3.0'
       feature_base:
         description: '基础系统配置 (SYSVIPC, EPOLL, TMPFS等)'
         type: boolean
@@ -444,10 +441,12 @@ jobs:
           fi
 
       # ---------- 修复 PIC 错误并准备编译环境 ----------
-      - name: 预编译 scripts 和头文件（修复 PIC 错误）
+      - name: 预编译 scripts 和头文件（修复 PIC 错误并确保权限）
         run: |
           cd $KERNEL_SRC
-          # 禁用 PIE，解决新 GCC 编译旧内核时的 "code model kernel does not support PIC mode" 错误
+          # 确保脚本有执行权限，避免 bindeb-pkg 时 Permission denied
+          chmod -R +x scripts/
+          # 禁用 PIE，解决新 GCC 编译旧内核时的 PIC 错误
           export KCFLAGS="-fno-pie"
           export KAFLAGS="-fno-pie"
           make scripts
