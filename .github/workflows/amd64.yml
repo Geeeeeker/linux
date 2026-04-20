@@ -127,19 +127,19 @@ permissions:
   contents: write
 
 jobs:
-# ------------------------------------------------------------
-  # Job 1: 编译旧版内核 (4.19) → Ubuntu 22.04 + GCC 8
+  # ------------------------------------------------------------
+  # Job 1: 编译旧版内核 (4.19) → Ubuntu 20.04 + GCC 8
   # ------------------------------------------------------------
   build-legacy:
     if: ${{ github.event.inputs.kernel_version == '4.19' }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     strategy:
       fail-fast: false
     steps:
       - name: 检出本仓库
         uses: actions/checkout@v4
 
-      - name: 安装编译基础依赖 (Ubuntu 22.04)
+      - name: 安装编译基础依赖 (Ubuntu 20.04)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -148,10 +148,8 @@ jobs:
             libtool autoconf automake pkg-config libglib2.0-dev libudev-dev \
             libusb-1.0-0-dev libxml2-dev debhelper libdw-dev
 
-      - name: 安装 GCC 8 (通过 PPA)
+      - name: 设置 GCC 8 (Ubuntu 20.04 默认可用)
         run: |
-          sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
-          sudo apt-get update
           sudo apt-get install -y gcc-8 g++-8
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 100
